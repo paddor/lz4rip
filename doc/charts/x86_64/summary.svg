@@ -15,45 +15,37 @@
   <rect x="108.0" y="181.6" width="50.0" height="128.4" fill="#60a5fa" rx="1"/>
   <rect x="108.0" y="155.6" width="50.0" height="26.0" fill="#4680c4" rx="1"/>
   <rect x="108.0" y="131.8" width="50.0" height="23.7" fill="#60a5fa" rx="1"/>
-  <rect x="159.5" y="192.0" width="50.0" height="118.0" fill="#f87171" rx="1"/>
-  <rect x="159.5" y="163.7" width="50.0" height="28.3" fill="#c45050" rx="1"/>
-  <rect x="159.5" y="136.2" width="50.0" height="27.5" fill="#f87171" rx="1"/>
-  <rect x="211.0" y="175.1" width="50.0" height="134.9" fill="#f59e0b" rx="1"/>
-  <rect x="211.0" y="149.1" width="50.0" height="26.0" fill="#c47d08" rx="1"/>
-  <rect x="211.0" y="122.0" width="50.0" height="27.1" fill="#f59e0b" rx="1"/>
-  <rect x="262.5" y="163.1" width="50.0" height="146.9" fill="#f472b6" rx="1"/>
-  <rect x="262.5" y="134.8" width="50.0" height="28.3" fill="#c05a92" rx="1"/>
-  <rect x="262.5" y="103.7" width="50.0" height="31.1" fill="#f472b6" rx="1"/>
-  <rect x="314.0" y="145.6" width="50.0" height="164.4" fill="#4ade80" rx="1"/>
-  <rect x="314.0" y="119.6" width="50.0" height="26.0" fill="#3aaf60" rx="1"/>
-  <rect x="314.0" y="88.3" width="50.0" height="31.4" fill="#4ade80" rx="1"/>
-  <text x="236.8" y="328" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">Compressible</text>
+  <rect x="159.9" y="165.4" width="50.0" height="144.6" fill="#f87171" rx="1"/>
+  <rect x="159.9" y="137.1" width="50.0" height="28.3" fill="#c45050" rx="1"/>
+  <rect x="159.9" y="103.1" width="50.0" height="34.0" fill="#f87171" rx="1"/>
+  <rect x="211.8" y="175.1" width="50.0" height="134.9" fill="#f59e0b" rx="1"/>
+  <rect x="211.8" y="149.1" width="50.0" height="26.0" fill="#c47d08" rx="1"/>
+  <rect x="211.8" y="122.0" width="50.0" height="27.1" fill="#f59e0b" rx="1"/>
+  <rect x="263.6" y="145.6" width="50.0" height="164.4" fill="#4ade80" rx="1"/>
+  <rect x="263.6" y="119.6" width="50.0" height="26.0" fill="#3aaf60" rx="1"/>
+  <rect x="263.6" y="88.3" width="50.0" height="31.4" fill="#4ade80" rx="1"/>
+  <text x="211.8" y="328" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">Compressible</text>
   <rect x="488.0" y="206.6" width="50.0" height="103.4" fill="#60a5fa" rx="1"/>
   <rect x="488.0" y="156.9" width="50.0" height="49.7" fill="#4680c4" rx="1"/>
   <rect x="488.0" y="139.1" width="50.0" height="17.7" fill="#60a5fa" rx="1"/>
-  <rect x="539.5" y="264.6" width="50.0" height="45.4" fill="#f87171" rx="1"/>
-  <rect x="539.5" y="212.8" width="50.0" height="51.8" fill="#c45050" rx="1"/>
-  <rect x="539.5" y="199.5" width="50.0" height="13.3" fill="#f87171" rx="1"/>
-  <rect x="591.0" y="209.1" width="50.0" height="100.9" fill="#f59e0b" rx="1"/>
-  <rect x="591.0" y="159.2" width="50.0" height="49.9" fill="#c47d08" rx="1"/>
-  <rect x="591.0" y="139.9" width="50.0" height="19.3" fill="#f59e0b" rx="1"/>
-  <rect x="642.5" y="246.1" width="50.0" height="63.9" fill="#f472b6" rx="1"/>
-  <rect x="642.5" y="194.2" width="50.0" height="51.8" fill="#c05a92" rx="1"/>
-  <rect x="642.5" y="179.8" width="50.0" height="14.4" fill="#f472b6" rx="1"/>
-  <rect x="694.0" y="184.2" width="50.0" height="125.8" fill="#4ade80" rx="1"/>
-  <rect x="694.0" y="134.3" width="50.0" height="49.9" fill="#3aaf60" rx="1"/>
-  <rect x="694.0" y="112.6" width="50.0" height="21.6" fill="#4ade80" rx="1"/>
-  <text x="616.8" y="328" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">Incompressible</text>
+  <rect x="539.9" y="248.3" width="50.0" height="61.7" fill="#f87171" rx="1"/>
+  <rect x="539.9" y="196.4" width="50.0" height="51.8" fill="#c45050" rx="1"/>
+  <rect x="539.9" y="180.4" width="50.0" height="16.0" fill="#f87171" rx="1"/>
+  <rect x="591.8" y="209.1" width="50.0" height="100.9" fill="#f59e0b" rx="1"/>
+  <rect x="591.8" y="159.2" width="50.0" height="49.9" fill="#c47d08" rx="1"/>
+  <rect x="591.8" y="139.9" width="50.0" height="19.3" fill="#f59e0b" rx="1"/>
+  <rect x="643.6" y="184.2" width="50.0" height="125.8" fill="#4ade80" rx="1"/>
+  <rect x="643.6" y="134.3" width="50.0" height="49.9" fill="#3aaf60" rx="1"/>
+  <rect x="643.6" y="112.6" width="50.0" height="21.6" fill="#4ade80" rx="1"/>
+  <text x="591.8" y="328" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600">Incompressible</text>
   <rect x="250" y="345" width="12" height="12" fill="#60a5fa" rx="2"/>
   <text x="268" y="355" fill="#e6edf3" font-size="10" font-weight="500">lz4 (C)</text>
   <rect x="250" y="363" width="12" height="12" fill="#f87171" rx="2"/>
-  <text x="268" y="373" fill="#e6edf3" font-size="10" font-weight="500">lz4rip (encapsulated unsafe)</text>
-  <rect x="250" y="381" width="12" height="12" fill="#f59e0b" rx="2"/>
-  <text x="268" y="391" fill="#e6edf3" font-size="10" font-weight="500">lz4_flex (unsafe)</text>
-  <rect x="460" y="345" width="12" height="12" fill="#f472b6" rx="2"/>
-  <text x="478" y="355" fill="#e6edf3" font-size="10" font-weight="500">lz4rip paranoid (safe)</text>
+  <text x="268" y="373" fill="#e6edf3" font-size="10" font-weight="500">lz4rip (safe)</text>
+  <rect x="460" y="345" width="12" height="12" fill="#f59e0b" rx="2"/>
+  <text x="478" y="355" fill="#e6edf3" font-size="10" font-weight="500">lz4_flex (unsafe)</text>
   <rect x="460" y="363" width="12" height="12" fill="#4ade80" rx="2"/>
   <text x="478" y="373" fill="#e6edf3" font-size="10" font-weight="500">lz4_flex (safe)</text>
-  <text x="240" y="416" fill="#e6edf3" font-size="9">bright = compress + decompress</text>
-  <text x="480" y="416" fill="#7d8590" font-size="9">dim = transfer @1 GB/s</text>
+  <text x="240" y="398" fill="#e6edf3" font-size="9">bright = compress + decompress</text>
+  <text x="480" y="398" fill="#7d8590" font-size="9">dim = transfer @1 GB/s</text>
 </svg>

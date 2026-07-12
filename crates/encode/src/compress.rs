@@ -27,7 +27,9 @@ pub use crate::hashtable::{DEFAULT_DICT_ENTRIES, DEFAULT_NODICT_ENTRIES, MIN_ENT
 const EPOCH_THRESHOLD: usize = 8 * 1024;
 
 /// Skip acceleration: step grows by 1 every `1 << N` consecutive non-matches.
-/// C lz4 uses 6; see DESIGN.md for tradeoff analysis.
+/// C lz4 uses 6. Lower values skip faster on non-matches. 3 is the
+/// sweet spot: raising it buys negligible ratio but punishes
+/// incompressible data hard. See DESIGN.md.
 const INCREASE_STEPSIZE_BITSHIFT: usize = 3;
 
 /// Inputs up to this size use the dict table read-only (no per-call clearing or

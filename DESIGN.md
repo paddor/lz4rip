@@ -28,7 +28,16 @@ Crossover analysis against `bs6` (C lz4's default) at various transfer bandwidth
 | 1 GB/s | -8.4% | bs3 |
 | infinite | -10.6% | bs3 |
 
-Below ~50 MB/s, the 8pp ratio difference dominates and bs6 is 1-2% faster end-to-end. Above that, bs3's compression speed advantage takes over. For memory-to-memory, IPC, local storage, and datacenter networking, bs3 is the right choice.
+Below ~50 MB/s, the 8pp ratio difference dominates and bs6 is 1-2% faster
+end-to-end. Above that, bs3's compression speed advantage takes over. For
+memory-to-memory, IPC, local storage, and datacenter networking, bs3 is the
+right choice.
+
+**Why not raise it (bs4, bs5, bs6)?** Tested repeatedly. Ratio barely improves,
+compression gets slower across the board, and incompressible data gets hit
+hardest because the compressor wastes cycles hashing bytes that will never
+match. LZ4 is a speed codec. Chasing ratio turns it into a worse zstd instead
+of a better LZ4. The value 3 is final.
 
 ## Hash tables
 
