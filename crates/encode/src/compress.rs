@@ -146,14 +146,14 @@ pub(crate) fn compress_internal<
     let mut cur = input_pos;
 
     if cur == 0 && input_stream_offset == 0 {
-        let hash = T::get_hash_at_inbounds(input, 0);
+        let hash = T::get_hash_at(input, 0);
         if !READONLY {
             table.put_at(hash, 0);
         }
         cur = 1;
     }
 
-    let mut forward_hash = T::get_hash_at_inbounds(input, cur);
+    let mut forward_hash = T::get_hash_at(input, cur);
 
     loop {
         let mut candidate;
@@ -173,7 +173,7 @@ pub(crate) fn compress_internal<
 
             let hash = forward_hash;
             candidate = table.get_at(hash);
-            forward_hash = T::get_hash_at_inbounds(input, next_cur);
+            forward_hash = T::get_hash_at(input, next_cur);
             if !READONLY {
                 table.put_at(hash, cur + input_stream_offset);
             }
@@ -227,7 +227,7 @@ pub(crate) fn compress_internal<
                 END_OFFSET,
             );
 
-            let hash = T::get_hash_at_inbounds(input, cur - 2);
+            let hash = T::get_hash_at(input, cur - 2);
             if !READONLY {
                 table.put_at(hash, cur - 2 + input_stream_offset);
             }
@@ -247,7 +247,7 @@ pub(crate) fn compress_internal<
             literal_start = cur;
 
             if !USE_DICT && cur <= end_pos_check {
-                let hash = T::get_hash_at_inbounds(input, cur);
+                let hash = T::get_hash_at(input, cur);
                 let rematch = table.get_at(hash);
 
                 if input_stream_offset + cur - rematch <= MAX_DISTANCE
@@ -266,7 +266,7 @@ pub(crate) fn compress_internal<
                 }
                 forward_hash = hash;
             } else if cur <= end_pos_check {
-                forward_hash = T::get_hash_at_inbounds(input, cur);
+                forward_hash = T::get_hash_at(input, cur);
             }
             break;
         }
@@ -348,11 +348,11 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
     let end_pos_check = input.len() - MFLIMIT;
     let mut literal_start = 0;
 
-    let hash = T::get_hash_at_inbounds(input, 0);
+    let hash = T::get_hash_at(input, 0);
     table.put_at(hash, input_stream_offset);
     let mut cur = 1;
 
-    let mut forward_hash = T::get_hash_at_inbounds(input, cur);
+    let mut forward_hash = T::get_hash_at(input, cur);
 
     loop {
         let mut candidate;
@@ -371,7 +371,7 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
             }
 
             let hash = forward_hash;
-            forward_hash = T::get_hash_at_inbounds(input, next_cur);
+            forward_hash = T::get_hash_at(input, next_cur);
             let curr_bytes: u32 = crate::hashtable::get_batch_inbounds(input, cur);
 
             let main_candidate = table.get_at(hash);
@@ -432,7 +432,7 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
             END_OFFSET,
         );
 
-        let hash = T::get_hash_at_inbounds(input, cur - 2);
+        let hash = T::get_hash_at(input, cur - 2);
         table.put_at(hash, cur - 2 + input_stream_offset);
 
         let token = token_from_literal_and_match_length(lit_len, duplicate_length);
@@ -450,7 +450,7 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
         literal_start = cur;
 
         if cur <= end_pos_check {
-            forward_hash = T::get_hash_at_inbounds(input, cur);
+            forward_hash = T::get_hash_at(input, cur);
         }
     }
 }

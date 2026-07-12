@@ -5,8 +5,8 @@ use lz4rip::block::{
     decompress_into, get_maximum_output_size, CompressorRefN, Decompressor, DictCompressorRefN,
 };
 
-/// Round-trip through the const-generic small-table compressors. Exercises the
-/// encapsulated-unsafe paths at the minimum and intermediate entry counts:
+/// Round-trip through the const-generic small-table compressors at the minimum
+/// and intermediate entry counts:
 /// - `CompressorRefN<256>` / `<512>`: no-dict, smallest u32 tables (epoch reuse).
 /// - `DictCompressorRefN<256>` / `<1024>`: dict path, dual u16 tables, plus the
 ///   u16-overflow fallback (dict + input >= 64 KB) which builds a fresh

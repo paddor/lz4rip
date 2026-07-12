@@ -20,20 +20,6 @@ impl<'a> VerifiedSliceSink<'a> {
 }
 
 impl Sink for VerifiedSliceSink<'_> {
-    #[cfg(not(feature = "paranoid"))]
-    #[inline]
-    fn push(&mut self, byte: u8) {
-        debug_assert!(self.pos < self.output.len());
-        // SAFETY: capacity was verified upfront by compress_internal before
-        // any writes. pos advances by at most get_maximum_output_size(input_len)
-        // which is <= output.len().
-        unsafe {
-            *self.output.get_unchecked_mut(self.pos) = byte;
-        }
-        self.pos += 1;
-    }
-
-    #[cfg(feature = "paranoid")]
     #[inline]
     fn push(&mut self, byte: u8) {
         self.output[self.pos] = byte;
@@ -55,21 +41,6 @@ impl Sink for VerifiedSliceSink<'_> {
         self.extend_from_slice_wild(data, data.len())
     }
 
-    #[cfg(not(feature = "paranoid"))]
-    #[inline]
-    fn extend_from_slice_wild(&mut self, data: &[u8], copy_len: usize) {
-        debug_assert!(copy_len <= data.len());
-        debug_assert!(self.pos + data.len() <= self.output.len());
-        // SAFETY: same upfront capacity guarantee as push().
-        let dst = unsafe {
-            self.output
-                .get_unchecked_mut(self.pos..self.pos + data.len())
-        };
-        slice_copy(data, dst);
-        self.pos += copy_len;
-    }
-
-    #[cfg(feature = "paranoid")]
     #[inline]
     fn extend_from_slice_wild(&mut self, data: &[u8], copy_len: usize) {
         debug_assert!(copy_len <= data.len());

@@ -13,8 +13,6 @@ default = ["std"]
 alloc = []
 std = ["alloc", "lz4rip-core/std"]
 nightly = ["lz4rip-core/nightly"]
-# Pure safe Rust: forbid all unsafe, swap unchecked ops for safe twins.
-paranoid = ["lz4rip-core/paranoid"]
 
 [dependencies]
 lz4rip-core = { version = "0.5.4", path = "../core", default-features = false }

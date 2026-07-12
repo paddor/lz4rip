@@ -433,26 +433,10 @@ fn save_results_to(subdir: &str, results: &[BenchResult]) {
     }
 }
 
-// The lz4rip codec is labeled per build: a `--features paranoid` build of this
-// example exercises the pure-safe code path and reports under the "paranoid"
-// names so its results cache separately and appear as their own chart bars.
-#[cfg(not(feature = "paranoid"))]
 const LZ4RIP_CODEC: &str = "lz4rip";
-#[cfg(feature = "paranoid")]
-const LZ4RIP_CODEC: &str = "lz4rip paranoid";
-#[cfg(not(feature = "paranoid"))]
 const LZ4RIP_DICT_CODEC: &str = "lz4rip (dict 2K)";
-#[cfg(feature = "paranoid")]
-const LZ4RIP_DICT_CODEC: &str = "lz4rip paranoid (dict 2K)";
-
-#[cfg(not(feature = "paranoid"))]
 const CODECS: &[&str] = &["C lz4", "lz4rip", "lz4_flex", "lz4_flex unsafe"];
-#[cfg(feature = "paranoid")]
-const CODECS: &[&str] = &["C lz4", "lz4rip paranoid", "lz4_flex", "lz4_flex unsafe"];
-#[cfg(not(feature = "paranoid"))]
 const DICT_CODECS: &[&str] = &["C lz4 (dict 2K)", "lz4rip (dict 2K)"];
-#[cfg(feature = "paranoid")]
-const DICT_CODECS: &[&str] = &["C lz4 (dict 2K)", "lz4rip paranoid (dict 2K)"];
 
 const SILESIA_DOWNLOADS: &[(&str, &str)] = &[
     (

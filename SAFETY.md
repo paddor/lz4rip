@@ -1,29 +1,11 @@
 # Safety
 
-## Unsafe boundary
+## Pure safe Rust
 
-The `lz4rip` facade exposes safe compression and decompression APIs. The default
-build isolates unsafe code to 20 blocks in 4 modules across 3 crates. Most blocks
-perform unchecked reads or writes whose bounds are proven by safe-region margins
-computed in the algorithm code.
-
-The internal hash-table trait and generic decompression entry point are not
-exported, so downstream safe code cannot construct invalid match candidates for
-unchecked encoder reads or supply a custom `Sink` whose capacity lies to the
-decoder fast path. See [DESIGN.md](DESIGN.md) for the unsafe-site inventory,
-frame-compression table invariants, and safe-region margin computation.
-
-## Paranoid build (zero unsafe)
-
-The `paranoid` feature compiles every crate with `#![forbid(unsafe_code)]`, so the
-build contains no `unsafe` at all. Each unchecked memory op is replaced by a safe
-twin (bounds-checked indexing, `copy_within`/`copy_from_slice`, `from_ne_bytes`
-reads, `chunks_exact` match counting) with the same signature, so callers are
-unchanged. This is for users and policies that forbid `unsafe` outright (e.g.
-`#![forbid(unsafe_code)]` in a downstream crate, or certification regimes). It
-trades a small amount of throughput for the guarantee; the default build keeps the
-isolated-unsafe design above. The two builds are byte-for-byte compatible: output
-of one decompresses with the other.
+Every crate in the workspace has `#![forbid(unsafe_code)]`. There are no
+`unsafe` blocks, `unsafe fn`, or `unsafe impl` anywhere in the library. All
+memory operations use bounds-checked indexing, `copy_from_slice`, `copy_within`,
+and `from_ne_bytes`.
 
 ## Why Rust matters here
 

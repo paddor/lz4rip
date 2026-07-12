@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "lz4rip"
-description = "Fast, memory-safe Rust implementation of LZ4 compression with built-in dictionary training and no-alloc support"
+description = "Fast, pure safe Rust LZ4 compression with built-in dictionary training and no-alloc support"
 version = "0.11.0"
 edition = "2024"
 rust-version = "1.85"
@@ -25,9 +25,6 @@ alloc = ["lz4rip-encode/alloc", "lz4rip-decode/alloc"]
 frame = ["std", "dep:twox-hash"]
 std = ["alloc", "lz4rip-core/std", "lz4rip-encode/std", "lz4rip-decode/std"]
 nightly = ["lz4rip-core/nightly", "lz4rip-encode/nightly", "lz4rip-decode/nightly"]
-# Pure safe Rust: `#![forbid(unsafe_code)]` on every crate. No unchecked
-# indexing or unaligned reads; unsafe ops swap for safe twins. Off by default.
-paranoid = ["lz4rip-core/paranoid", "lz4rip-encode/paranoid", "lz4rip-decode/paranoid"]
 
 [dependencies]
 lz4rip-core = { version = "0.5.4", path = "crates/core", default-features = false }

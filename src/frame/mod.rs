@@ -19,11 +19,8 @@
 
 use std::{fmt, io};
 
-#[cfg_attr(feature = "paranoid", forbid(unsafe_code))]
 pub(crate) mod compress;
-#[forbid(unsafe_code)]
 pub(crate) mod decompress;
-#[forbid(unsafe_code)]
 pub(crate) mod header;
 
 pub use compress::{AutoFinishEncoder, FrameEncoder};

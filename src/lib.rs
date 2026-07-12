@@ -59,6 +59,7 @@
 //! For no_std support only the [`block format`](block/index.html) is supported.
 //!
 //!
+#![forbid(unsafe_code)]
 #![deny(warnings)]
 #![deny(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]

@@ -19,20 +19,18 @@ import tempfile
 from pathlib import Path
 
 
-CODEC_ORDER = ["C lz4", "lz4rip", "lz4_flex unsafe", "lz4rip paranoid", "lz4_flex"]
+CODEC_ORDER = ["C lz4", "lz4rip", "lz4_flex unsafe", "lz4_flex"]
 
 COLORS = {
     "C lz4":             ("#60a5fa", "#4680c4"),   # blue
     "lz4rip":            ("#f87171", "#c45050"),   # red
-    "lz4rip paranoid":   ("#f472b6", "#c05a92"),   # pink
     "lz4_flex unsafe":   ("#f59e0b", "#c47d08"),   # amber
     "lz4_flex":          ("#4ade80", "#3aaf60"),   # green
 }
 
 LABELS = {
     "C lz4":             "lz4 (C)",
-    "lz4rip":            "lz4rip (encapsulated unsafe)",
-    "lz4rip paranoid":   "lz4rip paranoid (safe)",
+    "lz4rip":            "lz4rip (safe)",
     "lz4_flex unsafe":   "lz4_flex (unsafe)",
     "lz4_flex":          "lz4_flex (safe)",
 }
@@ -46,7 +44,7 @@ DICT_COLORS = {
 
 DICT_LABELS = {
     "C lz4 (dict 2K)":   "lz4 (C)",
-    "lz4rip (dict 2K)":  "lz4rip (encapsulated unsafe)",
+    "lz4rip (dict 2K)":  "lz4rip (safe)",
 }
 
 MAIN_INPUTS = {
@@ -288,8 +286,7 @@ def pipeline_chart(results, out_dir):
     legend_items = [(k, LABELS[k]) for k in codecs if k in COLORS]
     row_h = 18
     # Two columns, column-major: left column takes the extra entry when the
-    # count is odd (e.g. 5 codecs -> 3 left, 2 right). Matches the 4-codec
-    # layout exactly when there is no paranoid bar.
+    # count is odd.
     left_count = (len(legend_items) + 1) // 2
     leg_positions = [(0, r) for r in range(left_count)] + [
         (1, r) for r in range(len(legend_items) - left_count)
@@ -485,8 +482,7 @@ def summary_chart(results, out_dir):
     legend_items = [(k, LABELS[k]) for k in codecs if k in COLORS]
     row_h = 18
     # Two columns, column-major: left column takes the extra entry when the
-    # count is odd (e.g. 5 codecs -> 3 left, 2 right). Matches the 4-codec
-    # layout exactly when there is no paranoid bar.
+    # count is odd.
     left_count = (len(legend_items) + 1) // 2
     leg_positions = [(0, r) for r in range(left_count)] + [
         (1, r) for r in range(len(legend_items) - left_count)

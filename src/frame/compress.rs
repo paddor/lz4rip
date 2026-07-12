@@ -270,68 +270,23 @@ impl<W: io::Write> FrameEncoder<W> {
             )
         } else if self.ext_dict_len != 0 {
             debug_assert_eq!(self.frame_info.block_mode, BlockMode::Linked);
-            #[cfg(not(feature = "paranoid"))]
-            {
-                // SAFETY: `compression_table` is private to this
-                // `FrameEncoder`. It is initialized empty, then maintained only
-                // by `compress_into_sink_with_table` and
-                // `seed_table_with_input` using bytes from the same linked
-                // stream. `src_stream_offset` is the logical offset of
-                // `input[0]`; `ext_dict` is the previous window immediately
-                // before it.
-                unsafe {
-                    compress_into_sink_with_table::<true, true, false, _>(
-                        input,
-                        self.src_start,
-                        &mut vec_sink_for_compression(&mut self.dst, 0, 0, dst_required_size),
-                        &mut self.compression_table,
-                        &self.src[self.ext_dict_offset..self.ext_dict_offset + self.ext_dict_len],
-                        self.src_stream_offset,
-                    )
-                }
-            }
-            #[cfg(feature = "paranoid")]
-            {
-                compress_into_sink_with_table::<true, true, false, _>(
-                    input,
-                    self.src_start,
-                    &mut vec_sink_for_compression(&mut self.dst, 0, 0, dst_required_size),
-                    &mut self.compression_table,
-                    &self.src[self.ext_dict_offset..self.ext_dict_offset + self.ext_dict_len],
-                    self.src_stream_offset,
-                )
-            }
+            compress_into_sink_with_table::<true, true, false, _>(
+                input,
+                self.src_start,
+                &mut vec_sink_for_compression(&mut self.dst, 0, 0, dst_required_size),
+                &mut self.compression_table,
+                &self.src[self.ext_dict_offset..self.ext_dict_offset + self.ext_dict_len],
+                self.src_stream_offset,
+            )
         } else {
-            #[cfg(not(feature = "paranoid"))]
-            {
-                // SAFETY: `compression_table` is private to this
-                // `FrameEncoder`. It is initialized empty, then maintained only
-                // by `compress_into_sink_with_table` and
-                // `seed_table_with_input` using bytes from the same linked
-                // stream. With no external dictionary, accepted table entries
-                // map into `input` at `src_stream_offset`.
-                unsafe {
-                    compress_into_sink_with_table::<false, true, false, _>(
-                        input,
-                        self.src_start,
-                        &mut vec_sink_for_compression(&mut self.dst, 0, 0, dst_required_size),
-                        &mut self.compression_table,
-                        b"",
-                        self.src_stream_offset,
-                    )
-                }
-            }
-            #[cfg(feature = "paranoid")]
-            {
-                compress_into_sink_with_table::<false, true, false, _>(
-                    input,
-                    self.src_start,
-                    &mut vec_sink_for_compression(&mut self.dst, 0, 0, dst_required_size),
-                    &mut self.compression_table,
-                    b"",
-                    self.src_stream_offset,
-                )
-            }
+            compress_into_sink_with_table::<false, true, false, _>(
+                input,
+                self.src_start,
+                &mut vec_sink_for_compression(&mut self.dst, 0, 0, dst_required_size),
+                &mut self.compression_table,
+                b"",
+                self.src_stream_offset,
+            )
         };
 
         let (block_info, block_data) = match compress_result.map_err(Error::CompressionError)? {

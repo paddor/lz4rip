@@ -1,13 +1,12 @@
 # lz4rip
 
-Fast, memory-safe LZ4 compression for Rust. On par with C lz4 throughput, with safe facade APIs over a small documented unsafe boundary.
+Fast, pure safe Rust LZ4 compression. `#![forbid(unsafe_code)]` on every crate.
 
 Originally derived from [lz4_flex](https://github.com/PSeitz/lz4_flex).
 
 ## Why lz4rip
 
-- **C lz4 speed, safe by construction.** Unsafe is isolated to a few internal modules for raw memory ops. See [SAFETY.md](SAFETY.md).
-- **Optional zero-unsafe build.** The `paranoid` feature compiles every crate with `#![forbid(unsafe_code)]`, swapping each unchecked op for a safe twin. No `unsafe` at all.
+- **Pure safe Rust.** `#![forbid(unsafe_code)]` on every crate. No `unsafe` anywhere. See [SAFETY.md](SAFETY.md).
 - **8 KB hash tables, or smaller.** Half the L1d footprint of C lz4 and lz4_flex by default; the table size is a compile-time const generic, so constrained targets can drop to a 2 KB, 1 KB, or 512 B table.
 - **Built-in dictionary training.** `DictTrainer` learns a dictionary from your data. No external tools needed.
 - **Hot-loop friendly.** Epoch-based table reuse skips clearing between calls for small inputs.
@@ -113,9 +112,7 @@ table-size knob. The const-generic approach here lets you monomorphize different
 sizes in the same binary (e.g. 512 B for telemetry, 8 KB for bulk) with zero
 runtime cost.
 
-For a build with no `unsafe` at all, add the `paranoid` feature (see
-[SAFETY.md](SAFETY.md)). It composes with `no_std`, no-alloc, and the table-size
-knob.
+The table-size knob composes with `no_std` and no-alloc.
 
 ```rust
 use lz4rip::block::{compress_into, decompress_into, get_maximum_output_size};
@@ -241,7 +238,7 @@ let compressed = encoder.finish().unwrap();
 
 ## Safety
 
-[SAFETY.md](SAFETY.md) documents the unsafe boundary and catalogs C lz4 memory safety bugs that Rust prevents by construction.
+[SAFETY.md](SAFETY.md) catalogs C lz4 memory safety bugs that Rust prevents by construction.
 
 All codec paths are fuzz-tested (12 targets covering block and frame round-trip,
 dictionary round-trip, corruption resistance, cross-validation against C lz4,

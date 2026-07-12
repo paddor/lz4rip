@@ -1,20 +1,18 @@
 //! LZ4 block compression.
 
+#![forbid(unsafe_code)]
 #![deny(warnings)]
 #![deny(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(feature = "nightly", feature(optimize_attribute))]
-#![cfg_attr(feature = "paranoid", forbid(unsafe_code))]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-#[forbid(unsafe_code)]
 mod compress;
 #[cfg(feature = "alloc")]
 mod compressor;
 #[cfg(feature = "alloc")]
-#[forbid(unsafe_code)]
 mod dict;
 pub(crate) mod hashtable;
 mod verified_sink;
@@ -42,47 +40,7 @@ pub use hashtable::HashTableU32;
 /// Compress with a caller-owned `HashTableU32`.
 ///
 /// This is cross-crate plumbing for the frame encoder.
-///
-/// # Safety
-///
-/// The caller must ensure `table` is owned by the logical compression stream
-/// described by `input`, `input_pos`, `ext_dict`, and `input_stream_offset`.
-/// Every live table entry that can be accepted as an input or dictionary
-/// candidate must map to at least four readable bytes in that source slice.
-/// In practice, callers should only pass a table initialized and maintained by
-/// this function, optionally seeded by `seed_table_with_input` using bytes from
-/// the same logical stream.
 #[doc(hidden)]
-#[cfg(not(feature = "paranoid"))]
-pub unsafe fn compress_into_sink_with_table<
-    const USE_DICT: bool,
-    const HAS_OFFSET: bool,
-    const READONLY: bool,
-    S: lz4rip_core::Sink,
->(
-    input: &[u8],
-    input_pos: usize,
-    output: &mut S,
-    table: &mut hashtable::HashTableU32,
-    ext_dict: &[u8],
-    input_stream_offset: usize,
-) -> Result<usize, lz4rip_core::CompressError> {
-    compress::compress_into_sink_with_table_inner::<USE_DICT, HAS_OFFSET, READONLY, _>(
-        input,
-        input_pos,
-        output,
-        table,
-        ext_dict,
-        input_stream_offset,
-    )
-}
-
-/// Compress with a caller-owned `HashTableU32`.
-///
-/// This is cross-crate plumbing for the frame encoder. In the paranoid build
-/// this is safe because the implementation uses bounds-checked memory accesses.
-#[doc(hidden)]
-#[cfg(feature = "paranoid")]
 pub fn compress_into_sink_with_table<
     const USE_DICT: bool,
     const HAS_OFFSET: bool,

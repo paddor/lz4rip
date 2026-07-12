@@ -119,45 +119,21 @@ hash(pos+1) → check match at pos → if miss, use pre-computed hash
 
 C lz4 uses the same technique. lz4_flex does not.
 
-## Unsafe boundary
+## Pure safe Rust
 
-The `lz4rip` facade exposes safe compression and decompression APIs. Unsafe is
-isolated to 20 blocks in four modules across three crates:
-
-- `crates/encode/src/hashtable.rs` (5 blocks): `count_same_bytes_inbounds`,
-  `get_at`, and architecture-width batch reads. Each has `debug_assert` guards
-  on bounds.
-- `crates/encode/src/verified_sink.rs` (2 blocks): `VerifiedSliceSink` performs
-  unchecked writes after a one-time upfront capacity check at the compression
-  entry point.
-- `src/frame/compress.rs` (2 blocks): `FrameEncoder` calls the doc-hidden
-  `lz4rip_encode::compress_into_sink_with_table` plumbing with its private
-  `HashTableU32`. The safety comments tie the table to the same linked frame
-  stream, external dictionary window, and stream offset.
-- `crates/decode/src/primitives.rs` (11 blocks): unchecked memory reads
-  (`read_byte_inbounds`, `read_u16_inbounds`), wild copies (`wild_copy_16`,
-  `wild_copy_literals`, `wild_copy_match_8`/`_16`/`_32`,
-  `wild_match_copy_18`), `copy_within_nonoverlap`,
-  `copy_within_overlapping`, `copy_from_src`. Each has `debug_assert` guards
-  on bounds.
-
-`HashTable` is crate-private. `lz4rip-encode` exposes the concrete
-`compress_into_sink_with_table` wrapper for `HashTableU32` as doc-hidden
-cross-crate plumbing. It is `unsafe` in default builds because the caller-owned
-table must belong to the same logical compression stream as the input.
+Every crate in the workspace has `#![forbid(unsafe_code)]`. All memory
+operations use bounds-checked indexing, `copy_from_slice`, `copy_within`, and
+`from_ne_bytes`. There is no `unsafe` anywhere in the library.
 
 `decompress_internal` is crate-private. The facade crate's frame decoder uses a
 concrete `decompress_into_sink_with_dict` wrapper for `SliceSink`, so external
-safe code cannot supply a custom `Sink` whose reported capacity diverges from the
-output slice trusted by the unsafe fast path.
+code cannot supply a custom `Sink` whose reported capacity diverges from the
+output slice.
 
-`crates/encode/src/compressor.rs` is itself `#[forbid(unsafe_code)]`: the owning `Compressor`/`DictCompressor` hold their dictionary and hash tables as sibling fields, so the former self-referential `from_raw_parts` is gone.
-
-The safe-region margin computation in `decompress_internal` determines how far from buffer ends the fast path can operate. Inside the margin, unchecked reads and wild copies in `primitives.rs` are provably in-bounds. Outside it, the slow path uses `.get()` with explicit error returns.
-
-The `paranoid` feature (see [SAFETY.md](SAFETY.md)) replaces all 20 blocks with
-safe twins and adds `#![forbid(unsafe_code)]` to every crate, for a build with no
-`unsafe` at all.
+The safe-region margin computation in `decompress_internal` determines how far
+from buffer ends the fast path can operate. Inside the margin, wild copies in
+`primitives.rs` use fixed-size `copy_from_slice` / `copy_within`. Outside it,
+the slow path uses `.get()` with explicit error returns.
 
 ## Dictionary compression
 

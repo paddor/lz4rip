@@ -12,9 +12,6 @@ readme = "README.md"
 default = ["std"]
 std = []
 nightly = []
-# Core is already `#![forbid(unsafe_code)]`; this flag exists only to propagate
-# from the facade and encode/decode crates.
-paranoid = []
 
 [dev-dependencies]
 proptest = "1.0.0"
