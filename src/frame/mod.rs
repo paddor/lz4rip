@@ -38,6 +38,8 @@ pub(crate) mod compress;
 pub(crate) mod decompress;
 #[forbid(unsafe_code)]
 pub(crate) mod header;
+#[forbid(unsafe_code)]
+pub mod push;
 
 pub use compress::{AutoFinishEncoder, FrameEncoder};
 pub use decompress::FrameDecoder;
