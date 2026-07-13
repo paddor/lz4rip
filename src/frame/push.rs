@@ -21,8 +21,6 @@
 //! 7. After [`BlockHeader::EndMark`], if [`FrameInfo::content_checksum`] is set,
 //!    read 4 bytes (xxHash32, seed 0, of all uncompressed content).
 
-#![forbid(unsafe_code)]
-
 use super::Error;
 use super::header::{BlockInfo, FrameInfo};
 
