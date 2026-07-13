@@ -80,7 +80,7 @@
 /// assert_eq!(input, uncompressed);
 /// ```
 pub mod block {
-    pub use lz4rip_core::{CompressError, DecompressError};
+    pub use lz4rip_core::{CompressError, DecompressError, WINDOW_SIZE};
     pub use lz4rip_decode::{DecompressorRef, decompress_into, decompress_into_with_dict};
     pub use lz4rip_encode::{
         CompressorRef, CompressorRefN, DEFAULT_DICT_ENTRIES, DEFAULT_NODICT_ENTRIES,

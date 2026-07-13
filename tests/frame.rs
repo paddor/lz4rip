@@ -401,7 +401,7 @@ fn push_decode_linked_blocks() {
             BlockHeader::Compressed(len) => {
                 let len = len as usize;
                 let mut buf = vec![0u8; max_block];
-                let dict_start = output.len().saturating_sub(64 * 1024);
+                let dict_start = output.len().saturating_sub(lz4rip::block::WINDOW_SIZE);
                 let n = lz4rip::block::decompress_into_with_dict(
                     &compressed[pos..pos + len],
                     &mut buf,
