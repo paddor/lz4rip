@@ -1,6 +1,6 @@
 [workspace]
 members = [".", "crates/core", "crates/encode", "crates/decode"]
-resolver = "2"
+resolver = "3"
 
 [package]
 name = "lz4rip"
