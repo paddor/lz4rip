@@ -1,6 +1,6 @@
 [workspace]
 members = [".", "crates/core", "crates/encode", "crates/decode"]
-resolver = "2"
+resolver = "3"
 
 [package]
 name = "lz4rip"
@@ -40,8 +40,6 @@ lzzzz = "2.0.0"
 more-asserts = "0.3.1"
 snap = "1.1.0"
 proptest = "1.0.0"
-binggan = "0.14.0"
-jemallocator = "0.5.4"
 libc = "0.2"
 
 [dev-dependencies.lz4_flex_upstream]
@@ -68,11 +66,6 @@ panic = "unwind"
 [[example]]
 name = "quickstart"
 required-features = ["frame"]
-
-[[bench]]
-harness = false
-name = "binggan_bench"
-path = "benches/binggan_bench.rs"
 
 [[bench]]
 harness = false
