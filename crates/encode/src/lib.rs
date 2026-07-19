@@ -5,19 +5,22 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(feature = "nightly", feature(optimize_attribute))]
-#![cfg_attr(feature = "paranoid", forbid(unsafe_code))]
+#![cfg_attr(
+    any(feature = "paranoid", target_pointer_width = "32"),
+    forbid(unsafe_code)
+)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-#[cfg(not(feature = "paranoid"))]
+#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 macro_rules! paranoid_unsafe_call {
     ($e:expr) => {
         unsafe { $e }
     };
 }
 
-#[cfg(feature = "paranoid")]
+#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 macro_rules! paranoid_unsafe_call {
     ($e:expr) => {
         $e
@@ -67,7 +70,7 @@ pub use hashtable::HashTableU32;
 /// this function, optionally seeded by `seed_table_with_input` using bytes from
 /// the same logical stream.
 #[doc(hidden)]
-#[cfg(not(feature = "paranoid"))]
+#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 pub unsafe fn compress_into_sink_with_table<
     const USE_DICT: bool,
     const HAS_OFFSET: bool,
@@ -96,7 +99,7 @@ pub unsafe fn compress_into_sink_with_table<
 /// This is cross-crate plumbing for the frame encoder. In the paranoid build
 /// this is safe because the implementation uses bounds-checked memory accesses.
 #[doc(hidden)]
-#[cfg(feature = "paranoid")]
+#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 pub fn compress_into_sink_with_table<
     const USE_DICT: bool,
     const HAS_OFFSET: bool,

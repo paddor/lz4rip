@@ -49,6 +49,44 @@ fn read_integer_bounded(
 
 const LITERAL_LEN_MASK: u8 = 0b1111_0000;
 
+#[cfg(target_pointer_width = "32")]
+#[inline]
+fn has_headroom(pos: usize, len: usize, slack: usize, cap: usize) -> bool {
+    pos.checked_add(len)
+        .and_then(|end| end.checked_add(slack))
+        .is_some_and(|end| end <= cap)
+}
+
+#[cfg(not(target_pointer_width = "32"))]
+#[inline]
+fn has_headroom(pos: usize, len: usize, slack: usize, cap: usize) -> bool {
+    pos + len + slack <= cap
+}
+
+#[cfg(target_pointer_width = "32")]
+#[inline]
+fn len_exceeds_capacity(pos: usize, len: usize, cap: usize) -> bool {
+    len > cap.saturating_sub(pos)
+}
+
+#[cfg(not(target_pointer_width = "32"))]
+#[inline]
+fn len_exceeds_capacity(pos: usize, len: usize, cap: usize) -> bool {
+    pos + len > cap
+}
+
+#[cfg(target_pointer_width = "32")]
+#[inline]
+fn expected_output_size(pos: usize, len: usize) -> usize {
+    pos.saturating_add(len)
+}
+
+#[cfg(not(target_pointer_width = "32"))]
+#[inline]
+fn expected_output_size(pos: usize, len: usize) -> usize {
+    pos + len
+}
+
 #[test]
 fn check_token() {
     assert!(!does_token_fit(0xFF));
@@ -189,9 +227,9 @@ pub(crate) fn decompress_internal<const USE_DICT: bool, S: Sink>(
             let match_length = (MINMATCH + 15)
                 .checked_add(read_integer_bounded(input, &mut input_pos, out.len())?)
                 .ok_or(DecompressError::LiteralOutOfBounds)?;
-            if *pos + match_length > out.len() {
+            if len_exceeds_capacity(*pos, match_length, out.len()) {
                 return Err(DecompressError::OutputTooSmall {
-                    expected: *pos + match_length,
+                    expected: expected_output_size(*pos, match_length),
                     actual: out.len(),
                 });
             }
@@ -213,21 +251,21 @@ pub(crate) fn decompress_internal<const USE_DICT: bool, S: Sink>(
             if did_overflow {
                 return Err(DecompressError::OffsetOutOfBounds);
             }
-            if offset >= 32 && *pos + match_length + 32 <= out.len() {
+            if offset >= 32 && has_headroom(*pos, match_length, 32, out.len()) {
                 paranoid_unsafe_call!(crate::primitives::wild_copy_match_32(
                     out,
                     start,
                     pos,
                     match_length
                 ));
-            } else if offset >= 16 && *pos + match_length + 16 <= out.len() {
+            } else if offset >= 16 && has_headroom(*pos, match_length, 16, out.len()) {
                 paranoid_unsafe_call!(crate::primitives::wild_copy_match_16(
                     out,
                     start,
                     pos,
                     match_length
                 ));
-            } else if offset >= 8 && *pos + match_length + 8 <= out.len() {
+            } else if offset >= 8 && has_headroom(*pos, match_length, 8, out.len()) {
                 paranoid_unsafe_call!(crate::primitives::wild_copy_match_8(
                     out,
                     start,
@@ -271,18 +309,18 @@ pub(crate) fn decompress_internal<const USE_DICT: bool, S: Sink>(
                     .ok_or(DecompressError::LiteralOutOfBounds)?;
             }
 
-            if literal_length > input.len() - input_pos {
+            if len_exceeds_capacity(input_pos, literal_length, input.len()) {
                 return Err(DecompressError::LiteralOutOfBounds);
             }
-            if literal_length > output.capacity() - output.pos() {
+            if len_exceeds_capacity(output.pos(), literal_length, output.capacity()) {
                 return Err(DecompressError::OutputTooSmall {
-                    expected: output.pos() + literal_length,
+                    expected: expected_output_size(output.pos(), literal_length),
                     actual: output.capacity(),
                 });
             }
             let (out, pos) = output.output_mut_with_pos();
-            if input_pos + literal_length + 32 <= input.len()
-                && *pos + literal_length + 32 <= out.len()
+            if has_headroom(input_pos, literal_length, 32, input.len())
+                && has_headroom(*pos, literal_length, 32, out.len())
             {
                 paranoid_unsafe_call!(crate::primitives::wild_copy_literals(
                     input,
@@ -329,9 +367,9 @@ pub(crate) fn decompress_internal<const USE_DICT: bool, S: Sink>(
                 .ok_or(DecompressError::LiteralOutOfBounds)?;
         }
 
-        if output.pos() + match_length > output.capacity() {
+        if len_exceeds_capacity(output.pos(), match_length, output.capacity()) {
             return Err(DecompressError::OutputTooSmall {
-                expected: output.pos() + match_length,
+                expected: expected_output_size(output.pos(), match_length),
                 actual: output.capacity(),
             });
         }
@@ -348,21 +386,21 @@ pub(crate) fn decompress_internal<const USE_DICT: bool, S: Sink>(
         if did_overflow {
             return Err(DecompressError::OffsetOutOfBounds);
         }
-        if offset >= 32 && *pos + match_length + 32 <= out.len() {
+        if offset >= 32 && has_headroom(*pos, match_length, 32, out.len()) {
             paranoid_unsafe_call!(crate::primitives::wild_copy_match_32(
                 out,
                 start,
                 pos,
                 match_length
             ));
-        } else if offset >= 16 && *pos + match_length + 16 <= out.len() {
+        } else if offset >= 16 && has_headroom(*pos, match_length, 16, out.len()) {
             paranoid_unsafe_call!(crate::primitives::wild_copy_match_16(
                 out,
                 start,
                 pos,
                 match_length
             ));
-        } else if offset >= 8 && *pos + match_length + 8 <= out.len() {
+        } else if offset >= 8 && has_headroom(*pos, match_length, 8, out.len()) {
             paranoid_unsafe_call!(crate::primitives::wild_copy_match_8(
                 out,
                 start,

@@ -64,6 +64,8 @@ pub enum DecompressError {
 pub enum CompressError {
     /// The provided output is too small.
     OutputTooSmall,
+    /// The input or logical compression stream is too large for this target.
+    InputTooLarge,
 }
 
 impl fmt::Display for DecompressError {
@@ -97,6 +99,9 @@ impl fmt::Display for CompressError {
                 "output is too small for the compressed data, use get_maximum_output_size to \
                  reserve enough space",
             ),
+            CompressError::InputTooLarge => {
+                f.write_str("input or compression stream is too large for this target")
+            }
         }
     }
 }

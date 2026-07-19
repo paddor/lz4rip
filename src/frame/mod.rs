@@ -19,14 +19,14 @@
 
 use std::{fmt, io};
 
-#[cfg(not(feature = "paranoid"))]
+#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 macro_rules! paranoid_unsafe_call {
     ($e:expr) => {
         unsafe { $e }
     };
 }
 
-#[cfg(feature = "paranoid")]
+#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 macro_rules! paranoid_unsafe_call {
     ($e:expr) => {
         $e

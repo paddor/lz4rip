@@ -35,6 +35,40 @@ const INCREASE_STEPSIZE_BITSHIFT: usize = 3;
 /// virtually all matches. Skips the 8 KB table.clear() and all put_at writes.
 const DICT_READONLY_LIMIT: usize = 256;
 
+#[cfg(target_pointer_width = "32")]
+#[inline]
+fn ensure_stream_bounds(
+    input_stream_offset: usize,
+    input_len: usize,
+    ext_dict_len: usize,
+) -> Result<(), CompressError> {
+    if ext_dict_len > input_stream_offset {
+        return Err(CompressError::InputTooLarge);
+    }
+    let Some(span) = input_stream_offset
+        .checked_add(input_len)
+        .and_then(|i| i.checked_add(ext_dict_len))
+    else {
+        return Err(CompressError::InputTooLarge);
+    };
+    if span > isize::MAX as usize {
+        return Err(CompressError::InputTooLarge);
+    }
+    Ok(())
+}
+
+#[cfg(not(target_pointer_width = "32"))]
+#[inline]
+fn assert_stream_bounds(input_stream_offset: usize, input_len: usize, ext_dict_len: usize) {
+    assert!(ext_dict_len <= input_stream_offset);
+    assert!(
+        input_stream_offset
+            .checked_add(input_len)
+            .and_then(|i| i.checked_add(ext_dict_len))
+            .is_some_and(|i| i <= isize::MAX as usize)
+    );
+}
+
 #[inline]
 fn token_from_literal(lit_len: usize) -> u8 {
     if lit_len < 0xF {
@@ -116,13 +150,10 @@ pub(crate) fn compress_internal<
     assert!(input_pos <= input.len());
     if USE_DICT {
         assert!(ext_dict.len() <= WINDOW_SIZE);
-        assert!(ext_dict.len() <= input_stream_offset);
-        assert!(
-            input_stream_offset
-                .checked_add(input.len())
-                .and_then(|i| i.checked_add(ext_dict.len()))
-                .is_some_and(|i| i <= isize::MAX as usize)
-        );
+        #[cfg(target_pointer_width = "32")]
+        ensure_stream_bounds(input_stream_offset, input.len(), ext_dict.len())?;
+        #[cfg(not(target_pointer_width = "32"))]
+        assert_stream_bounds(input_stream_offset, input.len(), ext_dict.len());
     } else {
         assert!(ext_dict.is_empty());
     }
@@ -333,13 +364,10 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
 ) -> Result<usize, CompressError> {
     debug_assert_eq!(input_stream_offset, ext_dict.len());
     assert!(ext_dict.len() <= WINDOW_SIZE);
-    assert!(ext_dict.len() <= input_stream_offset);
-    assert!(
-        input_stream_offset
-            .checked_add(input.len())
-            .and_then(|i| i.checked_add(ext_dict.len()))
-            .is_some_and(|i| i <= isize::MAX as usize)
-    );
+    #[cfg(target_pointer_width = "32")]
+    ensure_stream_bounds(input_stream_offset, input.len(), ext_dict.len())?;
+    #[cfg(not(target_pointer_width = "32"))]
+    assert_stream_bounds(input_stream_offset, input.len(), ext_dict.len());
     if output.capacity() - output.pos() < get_maximum_output_size(input.len()) {
         return Err(CompressError::OutputTooSmall);
     }

@@ -5,6 +5,8 @@ use std::{
 };
 use twox_hash::XxHash32;
 
+#[cfg(target_pointer_width = "32")]
+use lz4rip_core::CompressError;
 use lz4rip_core::{SliceSink, WINDOW_SIZE};
 use lz4rip_encode::{
     HashTableU32, compress_into_sink_with_dict, compress_into_sink_with_table,
@@ -219,6 +221,16 @@ impl<W: io::Write> FrameEncoder<W> {
         Ok(())
     }
 
+    #[cfg(target_pointer_width = "32")]
+    #[inline]
+    fn add_stream_offset(&mut self, delta: usize) -> io::Result<()> {
+        self.src_stream_offset = self
+            .src_stream_offset
+            .checked_add(delta)
+            .ok_or(Error::CompressionError(CompressError::InputTooLarge))?;
+        Ok(())
+    }
+
     fn begin_frame(&mut self, buf_len: usize) -> io::Result<()> {
         self.is_frame_open = true;
         if self.frame_info.block_size == BlockSize::Auto {
@@ -247,7 +259,17 @@ impl<W: io::Write> FrameEncoder<W> {
         let max_block_size = self.frame_info.block_size.get_size();
         debug_assert!(self.src_end - self.src_start <= max_block_size);
 
-        if self.src_stream_offset + max_block_size + WINDOW_SIZE >= u32::MAX as usize / 2 {
+        #[cfg(target_pointer_width = "32")]
+        let should_reposition = {
+            let reposition_threshold = u32::MAX as usize / 2;
+            self.src_stream_offset
+                >= reposition_threshold.saturating_sub(max_block_size + WINDOW_SIZE)
+        };
+        #[cfg(not(target_pointer_width = "32"))]
+        let should_reposition =
+            self.src_stream_offset + max_block_size + WINDOW_SIZE >= u32::MAX as usize / 2;
+
+        if should_reposition {
             self.compression_table
                 .reposition((self.src_stream_offset - self.ext_dict_len) as _);
             self.src_stream_offset = self.ext_dict_len;
@@ -324,7 +346,12 @@ impl<W: io::Write> FrameEncoder<W> {
             if self.src_start >= max_block_size + WINDOW_SIZE {
                 self.ext_dict_offset = self.src_end - WINDOW_SIZE;
                 self.ext_dict_len = WINDOW_SIZE;
-                self.src_stream_offset += self.src_end;
+                #[cfg(target_pointer_width = "32")]
+                self.add_stream_offset(self.src_end)?;
+                #[cfg(not(target_pointer_width = "32"))]
+                {
+                    self.src_stream_offset += self.src_end;
+                }
                 self.src_start = 0;
                 self.src_end = 0;
             } else if self.src_start + self.ext_dict_len > WINDOW_SIZE {
@@ -343,7 +370,12 @@ impl<W: io::Write> FrameEncoder<W> {
             debug_assert_eq!(self.src.capacity(), max_block_size);
             self.src_start = 0;
             self.src_end = 0;
-            self.src_stream_offset += src.len();
+            #[cfg(target_pointer_width = "32")]
+            self.add_stream_offset(src.len())?;
+            #[cfg(not(target_pointer_width = "32"))]
+            {
+                self.src_stream_offset += src.len();
+            }
         }
         debug_assert!(self.src_start <= self.src_end);
         debug_assert!(self.src_start + max_block_size <= self.src.capacity());

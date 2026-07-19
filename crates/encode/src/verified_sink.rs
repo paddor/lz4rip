@@ -20,7 +20,7 @@ impl<'a> VerifiedSliceSink<'a> {
 }
 
 impl Sink for VerifiedSliceSink<'_> {
-    #[cfg(not(feature = "paranoid"))]
+    #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
     #[inline]
     fn push(&mut self, byte: u8) {
         debug_assert!(self.pos < self.output.len());
@@ -33,7 +33,7 @@ impl Sink for VerifiedSliceSink<'_> {
         self.pos += 1;
     }
 
-    #[cfg(feature = "paranoid")]
+    #[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
     #[inline]
     fn push(&mut self, byte: u8) {
         self.output[self.pos] = byte;
@@ -55,7 +55,7 @@ impl Sink for VerifiedSliceSink<'_> {
         self.extend_from_slice_wild(data, data.len())
     }
 
-    #[cfg(not(feature = "paranoid"))]
+    #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
     #[inline]
     fn extend_from_slice_wild(&mut self, data: &[u8], copy_len: usize) {
         debug_assert!(copy_len <= data.len());
@@ -69,7 +69,7 @@ impl Sink for VerifiedSliceSink<'_> {
         self.pos += copy_len;
     }
 
-    #[cfg(feature = "paranoid")]
+    #[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
     #[inline]
     fn extend_from_slice_wild(&mut self, data: &[u8], copy_len: usize) {
         debug_assert!(copy_len <= data.len());

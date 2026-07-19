@@ -6,19 +6,22 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(feature = "nightly", allow(internal_features))]
 #![cfg_attr(feature = "nightly", feature(core_intrinsics))]
-#![cfg_attr(feature = "paranoid", forbid(unsafe_code))]
+#![cfg_attr(
+    any(feature = "paranoid", target_pointer_width = "32"),
+    forbid(unsafe_code)
+)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-#[cfg(not(feature = "paranoid"))]
+#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 macro_rules! paranoid_unsafe_call {
     ($e:expr) => {
         unsafe { $e }
     };
 }
 
-#[cfg(feature = "paranoid")]
+#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 macro_rules! paranoid_unsafe_call {
     ($e:expr) => {
         $e
