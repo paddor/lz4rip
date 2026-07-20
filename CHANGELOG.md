@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-07-20
+
 ### Added
 
 - 32-bit Linux CI coverage for block/frame compression and decompression,
@@ -14,6 +16,7 @@
 - 32-bit targets use the paranoid-safe encode/decode internals by default.
 - On 32-bit targets, compression stream-size checks now return errors instead
   of panicking.
+- Bumped the JSR/WASM package metadata to 0.2.7.
 
 ## [0.11.1] - 2026-07-13
 
