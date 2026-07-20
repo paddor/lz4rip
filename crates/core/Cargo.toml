@@ -1,7 +1,7 @@
 [package]
 name = "lz4rip-core"
 description = "Shared types and constants for lz4rip encode/decode crates."
-version = "0.5.4"
+version = "0.5.5"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"

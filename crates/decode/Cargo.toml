@@ -1,7 +1,7 @@
 [package]
 name = "lz4rip-decode"
 description = "LZ4 block decompression for lz4rip."
-version = "0.10.2"
+version = "0.10.3"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -20,4 +20,4 @@ paranoid = ["lz4rip-core/paranoid"]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [dependencies]
-lz4rip-core = { version = "0.5.4", path = "../core", default-features = false }
+lz4rip-core = { version = "0.5.5", path = "../core", default-features = false }

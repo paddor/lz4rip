@@ -5,7 +5,7 @@ resolver = "3"
 [package]
 name = "lz4rip"
 description = "Fast, memory-safe Rust implementation of LZ4 compression with built-in dictionary training and no-alloc support"
-version = "0.11.1"
+version = "0.11.2"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
@@ -30,9 +30,9 @@ nightly = ["lz4rip-core/nightly", "lz4rip-encode/nightly", "lz4rip-decode/nightl
 paranoid = ["lz4rip-core/paranoid", "lz4rip-encode/paranoid", "lz4rip-decode/paranoid"]
 
 [dependencies]
-lz4rip-core = { version = "0.5.4", path = "crates/core", default-features = false }
-lz4rip-encode = { version = "0.10.4", path = "crates/encode", default-features = false }
-lz4rip-decode = { version = "0.10.2", path = "crates/decode", default-features = false }
+lz4rip-core = { version = "0.5.5", path = "crates/core", default-features = false }
+lz4rip-encode = { version = "0.10.5", path = "crates/encode", default-features = false }
+lz4rip-decode = { version = "0.10.3", path = "crates/decode", default-features = false }
 twox-hash = { version = "2.0.0", default-features = false, features = ["xxhash32"], optional = true }
 
 [dev-dependencies]
