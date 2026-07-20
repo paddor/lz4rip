@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 ///
 /// Caller must ensure both ranges are valid and `end_offset` bytes of
 /// input are reserved after the match region.
-#[cfg(not(feature = "paranoid"))]
+#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 #[inline]
 pub(crate) unsafe fn count_same_bytes_inbounds(
     input: &[u8],
@@ -77,7 +77,7 @@ pub(crate) unsafe fn count_same_bytes_inbounds(
 /// `count_same_bytes` helper: `chunks_exact(8).zip(..)` avoids a per-iteration
 /// bounds check and autovectorizes, then a byte tail. `to_le` makes
 /// `trailing_zeros` count from the lowest-address mismatching byte.
-#[cfg(feature = "paranoid")]
+#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 #[inline]
 pub(crate) fn count_same_bytes_inbounds(
     input: &[u8],
@@ -124,7 +124,7 @@ pub(crate) fn count_same_bytes_inbounds(
 ///
 /// # Safety
 /// Caller must ensure `n + 4 <= input.len()`.
-#[cfg(not(feature = "paranoid"))]
+#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 #[inline]
 pub(crate) unsafe fn get_batch_inbounds(input: &[u8], n: usize) -> u32 {
     debug_assert!(n + 4 <= input.len());
@@ -133,7 +133,7 @@ pub(crate) unsafe fn get_batch_inbounds(input: &[u8], n: usize) -> u32 {
 }
 
 /// Read 4 bytes at position `n` (paranoid: bounds-checked, native-endian).
-#[cfg(feature = "paranoid")]
+#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 #[inline]
 pub(crate) fn get_batch_inbounds(input: &[u8], n: usize) -> u32 {
     u32::from_ne_bytes(input[n..n + 4].try_into().unwrap())
@@ -149,7 +149,10 @@ pub(crate) fn get_batch_arch(input: &[u8], n: usize) -> usize {
 }
 
 #[inline]
-#[cfg(all(target_pointer_width = "64", not(feature = "paranoid")))]
+#[cfg(all(
+    target_pointer_width = "64",
+    not(any(feature = "paranoid", target_pointer_width = "32"))
+))]
 unsafe fn get_batch_arch_unchecked(input: &[u8], n: usize) -> usize {
     debug_assert!(n + core::mem::size_of::<usize>() <= input.len());
     unsafe { (input.as_ptr().add(n) as *const usize).read_unaligned() }
@@ -181,13 +184,13 @@ pub(crate) trait HashTable {
     /// Caller must ensure `pos + 8 <= input.len()`.
     ///
     /// Default delegates to the checked [`get_hash_at`](Self::get_hash_at).
-    #[cfg(not(feature = "paranoid"))]
+    #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
     #[inline]
     unsafe fn get_hash_at_inbounds(input: &[u8], pos: usize) -> usize {
         Self::get_hash_at(input, pos)
     }
     /// Hash `input[pos..]` (paranoid: bounds-checked).
-    #[cfg(feature = "paranoid")]
+    #[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
     #[inline]
     fn get_hash_at_inbounds(input: &[u8], pos: usize) -> usize {
         Self::get_hash_at(input, pos)
@@ -271,7 +274,10 @@ impl<const N: usize> HashTable for HashTableU32U16<N> {
         (batch << 24).wrapping_mul(PRIME5) >> (64 - N.ilog2() as usize)
     }
     #[inline]
-    #[cfg(all(target_pointer_width = "64", not(feature = "paranoid")))]
+    #[cfg(all(
+        target_pointer_width = "64",
+        not(any(feature = "paranoid", target_pointer_width = "32"))
+    ))]
     unsafe fn get_hash_at_inbounds(input: &[u8], pos: usize) -> usize {
         let batch = unsafe { get_batch_arch_unchecked(input, pos) };
         (batch << 24).wrapping_mul(PRIME5) >> (64 - N.ilog2() as usize)
@@ -355,7 +361,10 @@ impl<const N: usize> HashTable for HashTableU32<N> {
         }
     }
     #[inline]
-    #[cfg(all(target_pointer_width = "64", not(feature = "paranoid")))]
+    #[cfg(all(
+        target_pointer_width = "64",
+        not(any(feature = "paranoid", target_pointer_width = "32"))
+    ))]
     unsafe fn get_hash_at_inbounds(input: &[u8], pos: usize) -> usize {
         let batch = unsafe { get_batch_arch_unchecked(input, pos) };
         (batch << 24).wrapping_mul(PRIME5) >> (64 - N.ilog2() as usize)

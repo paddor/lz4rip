@@ -43,6 +43,25 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo +nightly test --features nightly
 
+  linux-32bit:
+    name: 32-bit linux (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - i686-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - uses: Swatinem/rust-cache@v2
+      - run: cross test --target ${{ matrix.target }} -p lz4rip --test portable_32bit
+      - run: cross test --target ${{ matrix.target }} --no-default-features --features std -p lz4rip --test portable_32bit
+
   lint:
     name: fmt + clippy
     runs-on: ubuntu-latest
@@ -59,7 +78,7 @@ jobs:
 
   ci-success:
     name: CI success
-    needs: [test, nightly, lint]
+    needs: [test, nightly, linux-32bit, lint]
     runs-on: ubuntu-latest
     if: always()
     steps:

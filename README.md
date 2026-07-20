@@ -12,6 +12,9 @@ Originally derived from [lz4_flex](https://github.com/PSeitz/lz4_flex).
 - **Built-in dictionary training.** `DictTrainer` learns a dictionary from your data. No external tools needed.
 - **Hot-loop friendly.** Epoch-based table reuse skips clearing between calls for small inputs.
 - **`no_std` and no-alloc ready.** Block format works without `std` or even `alloc`. Hash tables live on the stack when `alloc` is off. Frame format requires `std`.
+- **32-bit Linux.** `i686-unknown-linux-gnu` and
+  `armv7-unknown-linux-gnueabihf` are tested via the safe/paranoid internals.
+  Streams and frames are bounded by platform address-space limits.
 - **WebAssembly.** Available as [`@paddor/lz4rip`](https://jsr.io/@paddor/lz4rip) on JSR. Block compress and decompress, dictionaries.
 
 See [DESIGN.md](DESIGN.md) for how it all works.

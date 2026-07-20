@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- 32-bit Linux CI coverage for block/frame compression and decompression,
+  including dictionary training and dictionary compression.
+- `CompressError::InputTooLarge` for 32-bit inputs or logical compression
+  streams that exceed the target's addressable safety limits.
+
+### Changed
+
+- 32-bit targets use the paranoid-safe encode/decode internals by default.
+- On 32-bit targets, compression stream-size checks now return errors instead
+  of panicking.
+
 ## [0.11.1] - 2026-07-13
 
 ### Changed
