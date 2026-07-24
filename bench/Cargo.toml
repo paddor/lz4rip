@@ -1,0 +1,12 @@
+[package]
+name = "lz4rip-bench"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[dependencies]
+plotters = { version = "0.3", default-features = false, features = ["svg_backend", "line_series"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[workspace]

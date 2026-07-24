@@ -2,16 +2,16 @@ use std::hint::black_box;
 
 fn read_input(which: &str) -> Vec<u8> {
     let path = match which {
-        "hdfs" | "json" => "corpus/hdfs.json",
         "xml" => "corpus/silesia/xml",
         "dickens" => "corpus/silesia/dickens",
+        "nci" => "corpus/silesia/nci",
         other => panic!("unknown input: {other}"),
     };
     std::fs::read(path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"))
 }
 
 fn main() {
-    let which = std::env::args().nth(1).unwrap_or_else(|| "hdfs".into());
+    let which = std::env::args().nth(1).unwrap_or_else(|| "xml".into());
     let data = read_input(&which);
     let iters: usize = std::env::args()
         .nth(2)

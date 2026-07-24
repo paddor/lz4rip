@@ -26,10 +26,12 @@ non-matching data more aggressively than C lz4 and lz4_flex, which costs about
 9% ratio on compressible data (2.18x vs 2.39x) but makes compression faster,
 especially on incompressible input where the skip acceleration dominates.
 
+Charts use the full 12-file Silesia corpus.
+
 ![LZ4 Pipeline Summary](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/summary.svg)
 
 <details>
-<summary>x86_64 details (per-file, size sweep, dictionary)</summary>
+<summary>x86_64 Silesia details (per-file, prefix sweep, dictionary)</summary>
 
 ![LZ4 Pipeline Detail](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/pipeline.svg)
 ![LZ4 Size Sweep](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/sweep.svg)
@@ -37,18 +39,10 @@ especially on incompressible input where the skip acceleration dominates.
 </details>
 
 <details>
-<summary>x86_64 structured data (JSON/XML, with and without dictionary)</summary>
+<summary>x86_64 Silesia prefixes (with and without dictionary)</summary>
 
 ![LZ4 Structured Dict 2K](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/structured/dict2k.svg)
 ![LZ4 Structured No Dict](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/structured/no_dict.svg)
-</details>
-
-<details>
-<summary>aarch64 (Apple M4)</summary>
-
-![LZ4 Pipeline Summary](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/aarch64/summary.svg)
-![LZ4 Pipeline Detail](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/aarch64/pipeline.svg)
-![LZ4 Dict 2K](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/aarch64/dict2k.svg)
 </details>
 
 ## Block format

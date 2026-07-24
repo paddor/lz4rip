@@ -1,28 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 340" font-family="system-ui, -apple-system, sans-serif">
-  <rect width="400" height="340" fill="#0d1117"/>
-  <text x="220.0" y="22" text-anchor="middle" fill="#e6edf3" font-size="13" font-weight="700">LZ4 + Dict (2 KB): 1 KB JSON (lower is better)</text>
-  <text x="220.0" y="38" text-anchor="middle" fill="#7d8590" font-size="10">Intel Core i7-8700B @ 3.20GHz, performance governor, turbo off</text>
-  <line x1="70" y1="189.1" x2="370" y2="189.1" stroke="#21262d" stroke-width="1"/>
-  <text x="62" y="189.1" text-anchor="end" dominant-baseline="middle" fill="#7d8590" font-size="10">1.0</text>
-  <line x1="70" y1="148.3" x2="370" y2="148.3" stroke="#21262d" stroke-width="1"/>
-  <text x="62" y="148.3" text-anchor="end" dominant-baseline="middle" fill="#7d8590" font-size="10">2.0</text>
-  <line x1="70" y1="107.4" x2="370" y2="107.4" stroke="#21262d" stroke-width="1"/>
-  <text x="62" y="107.4" text-anchor="end" dominant-baseline="middle" fill="#7d8590" font-size="10">3.0</text>
-  <line x1="70" y1="66.6" x2="370" y2="66.6" stroke="#21262d" stroke-width="1"/>
-  <text x="62" y="66.6" text-anchor="end" dominant-baseline="middle" fill="#7d8590" font-size="10">4.0</text>
-  <line x1="70" y1="230" x2="370" y2="230" stroke="#30363d" stroke-width="1.5"/>
-  <text x="22" y="142.5" text-anchor="middle" fill="#e6edf3" font-size="11" font-weight="600" transform="rotate(-90,22,142.5)">seconds / GB</text>
-  <rect x="115.0" y="136.0" width="90.0" height="94.0" fill="#60a5fa" rx="2"/>
-  <rect x="115.0" y="126.5" width="90.0" height="9.5" fill="#4680c4" rx="2"/>
-  <rect x="115.0" y="77.8" width="90.0" height="48.7" fill="#60a5fa" rx="2"/>
-  <text x="160.0" y="71.8" text-anchor="middle" fill="#e6edf3" font-size="10" font-weight="600">3576 ns</text>
-  <rect x="235.0" y="152.7" width="90.0" height="77.3" fill="#f87171" rx="2"/>
-  <rect x="235.0" y="143.4" width="90.0" height="9.3" fill="#c45050" rx="2"/>
-  <rect x="235.0" y="89.5" width="90.0" height="53.9" fill="#f87171" rx="2"/>
-  <text x="280.0" y="83.5" text-anchor="middle" fill="#e6edf3" font-size="10" font-weight="600">3287 ns</text>
-  <text x="160.0" y="246" text-anchor="middle" fill="#e6edf3" font-size="10" font-weight="600">lz4 (C)</text>
-  <text x="280.0" y="246" text-anchor="middle" fill="#e6edf3" font-size="10" font-weight="600">lz4rip (encapsulated unsafe)</text>
-  <text x="70" y="287" fill="#e6edf3" font-size="9">bright = compress + decompress</text>
-  <text x="240" y="287" fill="#7d8590" font-size="9">dim = transfer @1 GB/s</text>
-  <text x="220.0" y="330" text-anchor="middle" fill="#484f58" font-size="9">1 KB JSON message, dict trained on 2000 messages</text>
+<svg viewBox="0 0 520 360" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, sans-serif">
+<rect x="0" y="0" width="520" height="360" opacity="1" fill="#0D1117" stroke="none"/>
+<text x="260" y="22" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="12.096774193548388" opacity="1" fill="#E6EDF3" font-weight="bold">
+12-file Silesia + Dict 2K: Pipeline @1 GB/s (lower is better)
+</text>
+<text x="260" y="40" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#7D8590">
+Intel Core i7-8700B @ 3.20GHz, 6 cores, performance governor, turbo off
+</text>
+<text x="22" y="151" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="9.67741935483871" opacity="1" fill="#E6EDF3" font-weight="bold" transform="rotate(270, 22, 151)">
+seconds / GB
+</text>
+<polyline fill="none" opacity="1" stroke="#21262D" stroke-width="1" points="70,193 490,193 "/>
+<text x="62" y="193" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#7D8590">
+1.0
+</text>
+<polyline fill="none" opacity="1" stroke="#21262D" stroke-width="1" points="70,146 490,146 "/>
+<text x="62" y="146" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#7D8590">
+2.0
+</text>
+<polyline fill="none" opacity="1" stroke="#21262D" stroke-width="1" points="70,99 490,99 "/>
+<text x="62" y="99" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#7D8590">
+3.0
+</text>
+<polyline fill="none" opacity="1" stroke="#30363D" stroke-width="2" points="70,240 490,240 "/>
+<rect x="158" y="130" width="101" height="110" opacity="1" fill="#60A5FA" stroke="none"/>
+<rect x="158" y="107" width="101" height="23" opacity="1" fill="#4680C4" stroke="none"/>
+<rect x="158" y="89" width="101" height="18" opacity="1" fill="#60A5FA" stroke="none"/>
+<text x="209" y="258" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#E6EDF3" font-weight="bold">
+lz4 (C, dict)
+</text>
+<rect x="301" y="128" width="101" height="112" opacity="1" fill="#F87171" stroke="none"/>
+<rect x="301" y="105" width="101" height="23" opacity="1" fill="#C45050" stroke="none"/>
+<rect x="301" y="85" width="101" height="20" opacity="1" fill="#F87171" stroke="none"/>
+<text x="351" y="258" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#E6EDF3" font-weight="bold">
+lz4rip (dict)
+</text>
+<text x="50" y="298" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="8.064516129032258" opacity="1" fill="#E6EDF3">
+bright = compress + decompress
+</text>
+<text x="290" y="298" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="8.064516129032258" opacity="1" fill="#7D8590">
+dim = transfer @1 GB/s
+</text>
+<text x="260" y="342" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="8.064516129032258" opacity="1" fill="#484F58">
+2 KB dictionary trained from 1 KB slices of each Silesia file
+</text>
 </svg>

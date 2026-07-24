@@ -4,8 +4,6 @@ use lz4rip::block::{
 };
 use more_asserts::assert_lt;
 
-const HDFS: &[u8] = include_bytes!("../corpus/hdfs.json");
-
 fn json_payload(target_bytes: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(target_bytes);
     let mut i = 0u64;
@@ -38,14 +36,16 @@ fn dict_roundtrip(corpus: &[u8], dict_bytes: usize) {
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn hdfs_dict_4k() {
-    dict_roundtrip(HDFS, 4096);
+fn generated_json_dict_4k() {
+    let corpus = json_payload(66_675);
+    dict_roundtrip(&corpus, 4096);
 }
 
 #[test]
 #[cfg_attr(miri, ignore)]
-fn hdfs_dict_64k() {
-    dict_roundtrip(HDFS, 65536);
+fn generated_json_dict_64k() {
+    let corpus = json_payload(132_000);
+    dict_roundtrip(&corpus, 65536);
 }
 
 #[test]
