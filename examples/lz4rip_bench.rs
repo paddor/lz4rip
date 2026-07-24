@@ -543,120 +543,46 @@ const ALL_FILES: &[&str] = &[
     "corpus/silesia/webster",
     "corpus/silesia/x-ray",
     "corpus/silesia/xml",
-    "corpus/hdfs.json",
 ];
 
-fn xorshift32(state: &mut u32) -> u32 {
-    let mut x = *state;
-    x ^= x << 13;
-    x ^= x >> 17;
-    x ^= x << 5;
-    *state = x;
-    x
+fn load_silesia_inputs() -> Vec<(String, Vec<u8>)> {
+    let mut inputs = Vec::new();
+    for &(path, _) in SILESIA_DOWNLOADS {
+        match std::fs::read(path) {
+            Ok(data) => {
+                let name = path.rsplit('/').next().unwrap().to_string();
+                inputs.push((name, data));
+            }
+            Err(e) => eprintln!("skipping {path}: {e}"),
+        }
+    }
+    inputs
 }
 
-fn json_payload(target_bytes: usize, counter_start: u64) -> Vec<u8> {
-    const LEVELS: &[&str] = &["DEBUG", "INFO", "WARN", "ERROR", "TRACE"];
-    const SERVICES: &[&str] = &[
-        "api-gateway",
-        "auth-svc",
-        "order-svc",
-        "payment-svc",
-        "notify-svc",
-        "inventory-svc",
-        "shipping-svc",
-        "billing-svc",
-        "search-svc",
-        "user-svc",
-        "session-svc",
-        "analytics-svc",
-        "cache-svc",
-        "config-svc",
-        "audit-svc",
-        "rate-limiter",
-    ];
-    const METHODS: &[&str] = &["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"];
-    const PATHS: &[&str] = &[
-        "/v1/widgets",
-        "/v1/users",
-        "/v1/orders",
-        "/v2/events",
-        "/v1/health",
-        "/v1/sessions",
-        "/v1/payments",
-        "/v2/search",
-        "/v1/inventory",
-        "/v1/shipping",
-        "/v1/analytics",
-        "/v2/config",
-    ];
-    const REGIONS: &[&str] = &[
-        "us-east-1",
-        "us-west-2",
-        "eu-west-1",
-        "ap-south-1",
-        "eu-central-1",
-        "ap-northeast-1",
-        "sa-east-1",
-        "ca-central-1",
-    ];
-    const STATUSES: &[u16] = &[
-        200, 201, 202, 204, 301, 302, 304, 400, 401, 403, 404, 405, 409, 422, 429, 500, 502, 503,
-        504,
-    ];
-    const MSGS: &[&str] = &[
-        "request handled successfully",
-        "resource created",
-        "cache miss, fetched from origin",
-        "rate limit approaching threshold",
-        "upstream timeout, retrying",
-        "authentication token refreshed",
-        "database connection pool exhausted",
-        "circuit breaker tripped",
-        "message queued for async processing",
-        "TLS handshake completed",
-        "request routed to fallback backend",
-        "payload validation passed",
-        "idempotency key matched existing result",
-        "graceful shutdown initiated",
-        "health check passed all probes",
-        "retry attempt succeeded after backoff",
-    ];
-    let mut out = Vec::with_capacity(target_bytes + 512);
-    let mut state = counter_start as u32;
-    if state == 0 {
-        state = 1;
+fn train_silesia_dict_from_inputs(inputs: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let mut trainer = lz4rip::block::DictTrainer::new(2048);
+    for (_, data) in inputs {
+        let sample_len = 1024.min(data.len());
+        if sample_len < 4 {
+            continue;
+        }
+        let start = (data.len() - sample_len) / 2;
+        trainer.add_sample(&data[start..start + sample_len]);
     }
-    while out.len() < target_bytes {
-        let trace_id = xorshift32(&mut state);
-        let span_id = xorshift32(&mut state);
-        let user_id = xorshift32(&mut state);
-        let r = xorshift32(&mut state) as usize;
-        let level = LEVELS[r % LEVELS.len()];
-        let service = SERVICES[(r >> 4) % SERVICES.len()];
-        let method = METHODS[(r >> 8) % METHODS.len()];
-        let path = PATHS[(r >> 12) % PATHS.len()];
-        let region = REGIONS[(r >> 16) % REGIONS.len()];
-        let status = STATUSES[(r >> 20) % STATUSES.len()];
-        let latency = (xorshift32(&mut state) % 5000) + 1;
-        let r2 = xorshift32(&mut state) as usize;
-        let msg = MSGS[r2 % MSGS.len()];
-        let host_id = xorshift32(&mut state);
-        let line = format!(
-            r#"{{"ts":"2026-04-27T12:34:56.{trace_id:08x}Z","level":"{level}","service":"{service}","trace_id":"{trace_id:08x}{span_id:08x}","span_id":"{span_id:08x}","user_id":"u-{user_id:08x}","method":"{method}","path":"{path}/{trace_id:08x}","status":{status},"latency_ms":{latency},"region":"{region}","host":"{service}-{host_id:08x}.svc.cluster.local","msg":"{msg}"}}"#,
-        );
-        out.extend_from_slice(line.as_bytes());
-        out.push(b'\n');
-    }
-    out.truncate(target_bytes);
-    out
+    let dict = trainer.train();
+    eprintln!("trained Silesia dict: {} bytes", dict.len());
+    dict
+}
+
+fn prefixed_input_name(name: &str, size: usize) -> String {
+    format!("{name}_{size}")
 }
 
 const SWEEP_SIZES: &[usize] = &[
     64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576,
 ];
 
-fn run_sweep(dict: &[u8]) {
+fn run_sweep(dict: &[u8], inputs: &[(String, Vec<u8>)]) {
     let target_ns = 20_000_000u64;
     let mut compressor = lz4rip::block::DictCompressor::new(dict);
     let decompressor = lz4rip::block::Decompressor::with_dict(dict);
@@ -667,151 +593,162 @@ fn run_sweep(dict: &[u8]) {
     let mut all_results: Vec<BenchResult> = Vec::new();
 
     for &size in SWEEP_SIZES {
-        let data = json_payload(size, 777_777);
-
-        let max_out = lz4rip::block::get_maximum_output_size(data.len());
-        let mut comp_buf = vec![0u8; max_out];
-        let mut decomp_buf = vec![0u8; data.len()];
-
-        // lz4rip (no dict)
-        {
-            let comp_len = lz4rip::block::compress_into(&data, &mut comp_buf).unwrap();
-            let compressed = comp_buf[..comp_len].to_vec();
-            let compress_ns = bench_loop(3, target_ns, 10, || {
-                let _ = lz4rip::block::compress_into(
-                    std::hint::black_box(&data),
-                    std::hint::black_box(&mut comp_buf),
-                );
-            });
-            let decompress_ns = bench_loop(3, target_ns, 10, || {
-                let _ = lz4rip::block::decompress_into(
-                    std::hint::black_box(&compressed),
-                    std::hint::black_box(&mut decomp_buf),
-                );
-            });
-            let r = BenchResult {
-                codec: "lz4rip".into(),
-                input_name: format!("{size}"),
-                input_size: data.len(),
-                compressed_size: comp_len,
-                compress_ns,
-                decompress_ns,
-            };
-            eprintln!("  lz4rip x {size}: {compress_ns:.0} ns comp, {decompress_ns:.0} ns decomp");
-            all_results.push(r);
-        }
-
-        // lz4rip (dict)
-        {
-            let comp_len = compressor.compress_into(&data, &mut comp_buf).unwrap();
-            let compressed = comp_buf[..comp_len].to_vec();
-            let compress_ns = bench_loop(3, target_ns, 10, || {
-                let _ = std::hint::black_box(&mut compressor).compress_into(
-                    std::hint::black_box(&data),
-                    std::hint::black_box(&mut comp_buf),
-                );
-            });
-            let decompress_ns = bench_loop(3, target_ns, 10, || {
-                let _ = decompressor.decompress_into(
-                    std::hint::black_box(&compressed),
-                    std::hint::black_box(&mut decomp_buf),
-                );
-            });
-            let r = BenchResult {
-                codec: "lz4rip (dict)".into(),
-                input_name: format!("{size}"),
-                input_size: data.len(),
-                compressed_size: comp_len,
-                compress_ns,
-                decompress_ns,
-            };
-            eprintln!(
-                "  lz4rip (dict) x {size}: {compress_ns:.0} ns comp, {decompress_ns:.0} ns decomp"
-            );
-            all_results.push(r);
-        }
-
-        // C lz4 (no dict)
-        {
-            let comp_len =
-                lzzzz::lz4::compress(&data, &mut comp_buf, lzzzz::lz4::ACC_LEVEL_DEFAULT).unwrap();
-            let compressed = comp_buf[..comp_len].to_vec();
-            let compress_ns = bench_loop(3, target_ns, 10, || {
-                let _ = lzzzz::lz4::compress(
-                    std::hint::black_box(&data),
-                    std::hint::black_box(&mut comp_buf),
-                    lzzzz::lz4::ACC_LEVEL_DEFAULT,
-                );
-            });
-            let decompress_ns = bench_loop(3, target_ns, 10, || {
-                let _ = lzzzz::lz4::decompress(
-                    std::hint::black_box(&compressed),
-                    std::hint::black_box(&mut decomp_buf),
-                );
-            });
-            let r = BenchResult {
-                codec: "C lz4".into(),
-                input_name: format!("{size}"),
-                input_size: data.len(),
-                compressed_size: comp_len,
-                compress_ns,
-                decompress_ns,
-            };
-            eprintln!("  C lz4 x {size}: {compress_ns:.0} ns comp, {decompress_ns:.0} ns decomp");
-            all_results.push(r);
-        }
-
-        // C lz4 (dict)
-        {
-            unsafe {
-                LZ4_resetStream_fast(stream);
-                LZ4_loadDict(stream, dict.as_ptr(), dict.len() as c_int);
+        for (source_name, source) in inputs {
+            if source.len() < size {
+                continue;
             }
-            let comp_len = unsafe {
-                LZ4_compress_fast_continue(
-                    stream,
-                    data.as_ptr(),
-                    comp_buf.as_mut_ptr(),
-                    data.len() as c_int,
-                    max_out as c_int,
-                    1,
-                )
-            } as usize;
-            let compressed = comp_buf[..comp_len].to_vec();
-            let compress_ns = bench_loop(3, target_ns, 10, || unsafe {
-                LZ4_resetStream_fast(stream);
-                LZ4_loadDict(stream, dict.as_ptr(), dict.len() as c_int);
-                LZ4_compress_fast_continue(
-                    stream,
-                    data.as_ptr(),
-                    comp_buf.as_mut_ptr(),
-                    data.len() as c_int,
-                    max_out as c_int,
-                    1,
+            let data = source[..size].to_vec();
+            let name = prefixed_input_name(source_name, size);
+
+            let max_out = lz4rip::block::get_maximum_output_size(data.len());
+            let mut comp_buf = vec![0u8; max_out];
+            let mut decomp_buf = vec![0u8; data.len()];
+
+            // lz4rip (no dict)
+            {
+                let comp_len = lz4rip::block::compress_into(&data, &mut comp_buf).unwrap();
+                let compressed = comp_buf[..comp_len].to_vec();
+                let compress_ns = bench_loop(3, target_ns, 10, || {
+                    let _ = lz4rip::block::compress_into(
+                        std::hint::black_box(&data),
+                        std::hint::black_box(&mut comp_buf),
+                    );
+                });
+                let decompress_ns = bench_loop(3, target_ns, 10, || {
+                    let _ = lz4rip::block::decompress_into(
+                        std::hint::black_box(&compressed),
+                        std::hint::black_box(&mut decomp_buf),
+                    );
+                });
+                let r = BenchResult {
+                    codec: "lz4rip".into(),
+                    input_name: name.clone(),
+                    input_size: data.len(),
+                    compressed_size: comp_len,
+                    compress_ns,
+                    decompress_ns,
+                };
+                eprintln!(
+                    "  lz4rip x {name}: {compress_ns:.0} ns comp, {decompress_ns:.0} ns decomp"
                 );
-            });
-            let decompress_ns = bench_loop(3, target_ns, 10, || unsafe {
-                LZ4_decompress_safe_usingDict(
-                    compressed.as_ptr(),
-                    decomp_buf.as_mut_ptr(),
-                    compressed.len() as c_int,
-                    decomp_buf.len() as c_int,
-                    dict.as_ptr(),
-                    dict.len() as c_int,
+                all_results.push(r);
+            }
+
+            // lz4rip (dict)
+            {
+                let comp_len = compressor.compress_into(&data, &mut comp_buf).unwrap();
+                let compressed = comp_buf[..comp_len].to_vec();
+                let compress_ns = bench_loop(3, target_ns, 10, || {
+                    let _ = std::hint::black_box(&mut compressor).compress_into(
+                        std::hint::black_box(&data),
+                        std::hint::black_box(&mut comp_buf),
+                    );
+                });
+                let decompress_ns = bench_loop(3, target_ns, 10, || {
+                    let _ = decompressor.decompress_into(
+                        std::hint::black_box(&compressed),
+                        std::hint::black_box(&mut decomp_buf),
+                    );
+                });
+                let r = BenchResult {
+                    codec: "lz4rip (dict)".into(),
+                    input_name: name.clone(),
+                    input_size: data.len(),
+                    compressed_size: comp_len,
+                    compress_ns,
+                    decompress_ns,
+                };
+                eprintln!(
+                    "  lz4rip (dict) x {name}: {compress_ns:.0} ns comp, {decompress_ns:.0} ns decomp"
                 );
-            });
-            let r = BenchResult {
-                codec: "C lz4 (dict)".into(),
-                input_name: format!("{size}"),
-                input_size: data.len(),
-                compressed_size: comp_len,
-                compress_ns,
-                decompress_ns,
-            };
-            eprintln!(
-                "  C lz4 (dict) x {size}: {compress_ns:.0} ns comp, {decompress_ns:.0} ns decomp"
-            );
-            all_results.push(r);
+                all_results.push(r);
+            }
+
+            // C lz4 (no dict)
+            {
+                let comp_len =
+                    lzzzz::lz4::compress(&data, &mut comp_buf, lzzzz::lz4::ACC_LEVEL_DEFAULT)
+                        .unwrap();
+                let compressed = comp_buf[..comp_len].to_vec();
+                let compress_ns = bench_loop(3, target_ns, 10, || {
+                    let _ = lzzzz::lz4::compress(
+                        std::hint::black_box(&data),
+                        std::hint::black_box(&mut comp_buf),
+                        lzzzz::lz4::ACC_LEVEL_DEFAULT,
+                    );
+                });
+                let decompress_ns = bench_loop(3, target_ns, 10, || {
+                    let _ = lzzzz::lz4::decompress(
+                        std::hint::black_box(&compressed),
+                        std::hint::black_box(&mut decomp_buf),
+                    );
+                });
+                let r = BenchResult {
+                    codec: "C lz4".into(),
+                    input_name: name.clone(),
+                    input_size: data.len(),
+                    compressed_size: comp_len,
+                    compress_ns,
+                    decompress_ns,
+                };
+                eprintln!(
+                    "  C lz4 x {name}: {compress_ns:.0} ns comp, {decompress_ns:.0} ns decomp"
+                );
+                all_results.push(r);
+            }
+
+            // C lz4 (dict)
+            {
+                unsafe {
+                    LZ4_resetStream_fast(stream);
+                    LZ4_loadDict(stream, dict.as_ptr(), dict.len() as c_int);
+                }
+                let comp_len = unsafe {
+                    LZ4_compress_fast_continue(
+                        stream,
+                        data.as_ptr(),
+                        comp_buf.as_mut_ptr(),
+                        data.len() as c_int,
+                        max_out as c_int,
+                        1,
+                    )
+                } as usize;
+                let compressed = comp_buf[..comp_len].to_vec();
+                let compress_ns = bench_loop(3, target_ns, 10, || unsafe {
+                    LZ4_resetStream_fast(stream);
+                    LZ4_loadDict(stream, dict.as_ptr(), dict.len() as c_int);
+                    LZ4_compress_fast_continue(
+                        stream,
+                        data.as_ptr(),
+                        comp_buf.as_mut_ptr(),
+                        data.len() as c_int,
+                        max_out as c_int,
+                        1,
+                    );
+                });
+                let decompress_ns = bench_loop(3, target_ns, 10, || unsafe {
+                    LZ4_decompress_safe_usingDict(
+                        compressed.as_ptr(),
+                        decomp_buf.as_mut_ptr(),
+                        compressed.len() as c_int,
+                        decomp_buf.len() as c_int,
+                        dict.as_ptr(),
+                        dict.len() as c_int,
+                    );
+                });
+                let r = BenchResult {
+                    codec: "C lz4 (dict)".into(),
+                    input_name: name.clone(),
+                    input_size: data.len(),
+                    compressed_size: comp_len,
+                    compress_ns,
+                    decompress_ns,
+                };
+                eprintln!(
+                    "  C lz4 (dict) x {name}: {compress_ns:.0} ns comp, {decompress_ns:.0} ns decomp"
+                );
+                all_results.push(r);
+            }
         }
     }
 
@@ -822,242 +759,242 @@ fn run_sweep(dict: &[u8]) {
 const STRUCTURED_SIZES: &[usize] = &[256, 512, 1024, 2048, 4096, 8192];
 const STRUCTURED_CODECS: &[&str] = &["C lz4", "lz4rip", "lz4_flex unsafe", "lz4_flex"];
 
-fn run_structured(only: &[String]) {
+fn run_structured(only: &[String], inputs: &[(String, Vec<u8>)]) {
     let target_ns = 20_000_000u64;
     let mut all_results: Vec<BenchResult> = Vec::new();
 
-    for &size in STRUCTURED_SIZES {
-        let data = json_payload(size, 42_000);
-        let name = format!("json_{size}");
-        let max_out = lz4rip::block::get_maximum_output_size(data.len());
-
-        for &codec in STRUCTURED_CODECS {
-            if !only.is_empty() && !only.iter().any(|o| codec.contains(o.as_str())) {
+    for (source_name, source) in inputs {
+        for &size in STRUCTURED_SIZES {
+            if source.len() < size {
                 continue;
             }
+            let data = source[..size].to_vec();
+            let name = prefixed_input_name(source_name, size);
+            let max_out = lz4rip::block::get_maximum_output_size(data.len());
 
-            eprintln!("  {codec} x {name}: benchmarking...");
-
-            let r = match codec {
-                "C lz4" => {
-                    // C lz4 stream API: LZ4_resetStream_fast reuses table for <4KB
-                    let stream = unsafe { LZ4_createStream() };
-                    assert!(!stream.is_null());
-                    let mut comp_buf = vec![0u8; max_out];
-
-                    unsafe {
-                        LZ4_resetStream_fast(stream);
-                    }
-                    let comp_len = unsafe {
-                        LZ4_compress_fast_continue(
-                            stream,
-                            data.as_ptr(),
-                            comp_buf.as_mut_ptr(),
-                            data.len() as c_int,
-                            max_out as c_int,
-                            1,
-                        )
-                    };
-                    assert!(comp_len > 0);
-                    let comp_len = comp_len as usize;
-                    let compressed = comp_buf[..comp_len].to_vec();
-                    let mut decomp_buf = vec![0u8; data.len()];
-
-                    let compress_ns = bench_loop(3, target_ns, 10, || unsafe {
-                        LZ4_resetStream_fast(stream);
-                        LZ4_compress_fast_continue(
-                            stream,
-                            data.as_ptr(),
-                            comp_buf.as_mut_ptr(),
-                            data.len() as c_int,
-                            max_out as c_int,
-                            1,
-                        );
-                    });
-
-                    let decompress_ns = bench_loop(3, target_ns, 10, || {
-                        let _ = lzzzz::lz4::decompress(
-                            std::hint::black_box(&compressed),
-                            std::hint::black_box(&mut decomp_buf),
-                        );
-                    });
-
-                    unsafe { LZ4_freeStream(stream) };
-
-                    BenchResult {
-                        codec: "C lz4".to_string(),
-                        input_name: name.clone(),
-                        input_size: data.len(),
-                        compressed_size: comp_len,
-                        compress_ns,
-                        decompress_ns,
-                    }
+            for &codec in STRUCTURED_CODECS {
+                if !only.is_empty() && !only.iter().any(|o| codec.contains(o.as_str())) {
+                    continue;
                 }
-                "lz4rip" => {
-                    // Compressor reuse: epoch trick skips memset for <=8KB
-                    let mut compressor = lz4rip::block::Compressor::new();
-                    let mut comp_buf = vec![0u8; max_out];
-                    let comp_len = compressor.compress_into(&data, &mut comp_buf).unwrap();
-                    let compressed = comp_buf[..comp_len].to_vec();
-                    let mut decomp_buf = vec![0u8; data.len()];
 
-                    let compress_ns = bench_loop(3, target_ns, 10, || {
-                        let _ = std::hint::black_box(&mut compressor).compress_into(
-                            std::hint::black_box(&data),
-                            std::hint::black_box(&mut comp_buf),
-                        );
-                    });
+                eprintln!("  {codec} x {name}: benchmarking...");
 
-                    let decompress_ns = bench_loop(3, target_ns, 10, || {
-                        let _ = lz4rip::block::decompress_into(
-                            std::hint::black_box(&compressed),
-                            std::hint::black_box(&mut decomp_buf),
-                        );
-                    });
+                let r = match codec {
+                    "C lz4" => {
+                        // C lz4 stream API: LZ4_resetStream_fast reuses table for <4KB
+                        let stream = unsafe { LZ4_createStream() };
+                        assert!(!stream.is_null());
+                        let mut comp_buf = vec![0u8; max_out];
 
-                    BenchResult {
-                        codec: "lz4rip".to_string(),
-                        input_name: name.clone(),
-                        input_size: data.len(),
-                        compressed_size: comp_len,
-                        compress_ns,
-                        decompress_ns,
+                        unsafe {
+                            LZ4_resetStream_fast(stream);
+                        }
+                        let comp_len = unsafe {
+                            LZ4_compress_fast_continue(
+                                stream,
+                                data.as_ptr(),
+                                comp_buf.as_mut_ptr(),
+                                data.len() as c_int,
+                                max_out as c_int,
+                                1,
+                            )
+                        };
+                        assert!(comp_len > 0);
+                        let comp_len = comp_len as usize;
+                        let compressed = comp_buf[..comp_len].to_vec();
+                        let mut decomp_buf = vec![0u8; data.len()];
+
+                        let compress_ns = bench_loop(3, target_ns, 10, || unsafe {
+                            LZ4_resetStream_fast(stream);
+                            LZ4_compress_fast_continue(
+                                stream,
+                                data.as_ptr(),
+                                comp_buf.as_mut_ptr(),
+                                data.len() as c_int,
+                                max_out as c_int,
+                                1,
+                            );
+                        });
+
+                        let decompress_ns = bench_loop(3, target_ns, 10, || {
+                            let _ = lzzzz::lz4::decompress(
+                                std::hint::black_box(&compressed),
+                                std::hint::black_box(&mut decomp_buf),
+                            );
+                        });
+
+                        unsafe { LZ4_freeStream(stream) };
+
+                        BenchResult {
+                            codec: "C lz4".to_string(),
+                            input_name: name.clone(),
+                            input_size: data.len(),
+                            compressed_size: comp_len,
+                            compress_ns,
+                            decompress_ns,
+                        }
                     }
-                }
-                "lz4_flex unsafe" => bench_lz4_flex_unsafe(&data, &name, target_ns),
-                "lz4_flex" => bench_lz4_flex_upstream(&data, &name, target_ns),
-                _ => unreachable!(),
-            };
+                    "lz4rip" => {
+                        // Compressor reuse: epoch trick skips memset for <=8KB
+                        let mut compressor = lz4rip::block::Compressor::new();
+                        let mut comp_buf = vec![0u8; max_out];
+                        let comp_len = compressor.compress_into(&data, &mut comp_buf).unwrap();
+                        let compressed = comp_buf[..comp_len].to_vec();
+                        let mut decomp_buf = vec![0u8; data.len()];
 
-            all_results.push(r);
+                        let compress_ns = bench_loop(3, target_ns, 10, || {
+                            let _ = std::hint::black_box(&mut compressor).compress_into(
+                                std::hint::black_box(&data),
+                                std::hint::black_box(&mut comp_buf),
+                            );
+                        });
+
+                        let decompress_ns = bench_loop(3, target_ns, 10, || {
+                            let _ = lz4rip::block::decompress_into(
+                                std::hint::black_box(&compressed),
+                                std::hint::black_box(&mut decomp_buf),
+                            );
+                        });
+
+                        BenchResult {
+                            codec: "lz4rip".to_string(),
+                            input_name: name.clone(),
+                            input_size: data.len(),
+                            compressed_size: comp_len,
+                            compress_ns,
+                            decompress_ns,
+                        }
+                    }
+                    "lz4_flex unsafe" => bench_lz4_flex_unsafe(&data, &name, target_ns),
+                    "lz4_flex" => bench_lz4_flex_upstream(&data, &name, target_ns),
+                    _ => unreachable!(),
+                };
+
+                all_results.push(r);
+            }
         }
     }
 
     save_results_to("structured", &all_results);
 }
 
-fn run_structured_dict(only: &[String]) {
+fn run_structured_dict(only: &[String], inputs: &[(String, Vec<u8>)], dict: &[u8]) {
     let target_ns = 20_000_000u64;
     let dict_codecs: &[&str] = &["C lz4 (dict 2K)", "lz4rip (dict 2K)"];
 
-    // Train dict from 200 samples of varying sizes <= 2048
-    let mut trainer = lz4rip::block::DictTrainer::new(2048);
-    for i in 0..200u64 {
-        let size = 64 + ((i.wrapping_mul(0x9E3779B1) % 1984) as usize);
-        let sample = json_payload(size.min(2048), i * 100);
-        trainer.add_sample(&sample);
-    }
-    let dict = trainer.train();
-    eprintln!("trained dict: {} bytes", dict.len());
-
-    let mut compressor = lz4rip::block::DictCompressor::new(&dict);
-    let decompressor = lz4rip::block::Decompressor::with_dict(&dict);
+    let mut compressor = lz4rip::block::DictCompressor::new(dict);
+    let decompressor = lz4rip::block::Decompressor::with_dict(dict);
 
     let stream = unsafe { LZ4_createStream() };
     assert!(!stream.is_null());
 
     let mut all_results: Vec<BenchResult> = Vec::new();
 
-    for &size in STRUCTURED_SIZES {
-        let data = json_payload(size, 42_000);
-        let name = format!("json_{size}");
-        let max_out = lz4rip::block::get_maximum_output_size(data.len());
-
-        for &codec in dict_codecs {
-            if !only.is_empty() && !only.iter().any(|o| codec.contains(o.as_str())) {
+    for (source_name, source) in inputs {
+        for &size in STRUCTURED_SIZES {
+            if source.len() < size {
                 continue;
             }
+            let data = source[..size].to_vec();
+            let name = prefixed_input_name(source_name, size);
+            let max_out = lz4rip::block::get_maximum_output_size(data.len());
 
-            eprintln!("  {codec} x {name}: benchmarking...");
-
-            let r = match codec {
-                "C lz4 (dict 2K)" => {
-                    let mut comp_buf = vec![0u8; max_out];
-                    unsafe {
-                        LZ4_resetStream_fast(stream);
-                        LZ4_loadDict(stream, dict.as_ptr(), dict.len() as c_int);
-                    }
-                    let comp_len = unsafe {
-                        LZ4_compress_fast_continue(
-                            stream,
-                            data.as_ptr(),
-                            comp_buf.as_mut_ptr(),
-                            data.len() as c_int,
-                            max_out as c_int,
-                            1,
-                        )
-                    };
-                    assert!(comp_len > 0);
-                    let comp_len = comp_len as usize;
-                    let compressed = comp_buf[..comp_len].to_vec();
-                    let mut decomp_buf = vec![0u8; data.len()];
-
-                    let compress_ns = bench_loop(3, target_ns, 10, || unsafe {
-                        LZ4_resetStream_fast(stream);
-                        LZ4_loadDict(stream, dict.as_ptr(), dict.len() as c_int);
-                        LZ4_compress_fast_continue(
-                            stream,
-                            data.as_ptr(),
-                            comp_buf.as_mut_ptr(),
-                            data.len() as c_int,
-                            max_out as c_int,
-                            1,
-                        );
-                    });
-
-                    let decompress_ns = bench_loop(3, target_ns, 10, || unsafe {
-                        LZ4_decompress_safe_usingDict(
-                            compressed.as_ptr(),
-                            decomp_buf.as_mut_ptr(),
-                            compressed.len() as c_int,
-                            decomp_buf.len() as c_int,
-                            dict.as_ptr(),
-                            dict.len() as c_int,
-                        );
-                    });
-
-                    BenchResult {
-                        codec: "C lz4 (dict 2K)".to_string(),
-                        input_name: name.clone(),
-                        input_size: data.len(),
-                        compressed_size: comp_len,
-                        compress_ns,
-                        decompress_ns,
-                    }
+            for &codec in dict_codecs {
+                if !only.is_empty() && !only.iter().any(|o| codec.contains(o.as_str())) {
+                    continue;
                 }
-                "lz4rip (dict 2K)" => {
-                    let mut comp_buf = vec![0u8; max_out];
-                    let comp_len = compressor.compress_into(&data, &mut comp_buf).unwrap();
-                    let compressed = comp_buf[..comp_len].to_vec();
-                    let mut decomp_buf = vec![0u8; data.len()];
 
-                    let compress_ns = bench_loop(3, target_ns, 10, || {
-                        let _ = std::hint::black_box(&mut compressor).compress_into(
-                            std::hint::black_box(&data),
-                            std::hint::black_box(&mut comp_buf),
-                        );
-                    });
+                eprintln!("  {codec} x {name}: benchmarking...");
 
-                    let decompress_ns = bench_loop(3, target_ns, 10, || {
-                        let _ = decompressor.decompress_into(
-                            std::hint::black_box(&compressed),
-                            std::hint::black_box(&mut decomp_buf),
-                        );
-                    });
+                let r = match codec {
+                    "C lz4 (dict 2K)" => {
+                        let mut comp_buf = vec![0u8; max_out];
+                        unsafe {
+                            LZ4_resetStream_fast(stream);
+                            LZ4_loadDict(stream, dict.as_ptr(), dict.len() as c_int);
+                        }
+                        let comp_len = unsafe {
+                            LZ4_compress_fast_continue(
+                                stream,
+                                data.as_ptr(),
+                                comp_buf.as_mut_ptr(),
+                                data.len() as c_int,
+                                max_out as c_int,
+                                1,
+                            )
+                        };
+                        assert!(comp_len > 0);
+                        let comp_len = comp_len as usize;
+                        let compressed = comp_buf[..comp_len].to_vec();
+                        let mut decomp_buf = vec![0u8; data.len()];
 
-                    BenchResult {
-                        codec: "lz4rip (dict 2K)".to_string(),
-                        input_name: name.clone(),
-                        input_size: data.len(),
-                        compressed_size: comp_len,
-                        compress_ns,
-                        decompress_ns,
+                        let compress_ns = bench_loop(3, target_ns, 10, || unsafe {
+                            LZ4_resetStream_fast(stream);
+                            LZ4_loadDict(stream, dict.as_ptr(), dict.len() as c_int);
+                            LZ4_compress_fast_continue(
+                                stream,
+                                data.as_ptr(),
+                                comp_buf.as_mut_ptr(),
+                                data.len() as c_int,
+                                max_out as c_int,
+                                1,
+                            );
+                        });
+
+                        let decompress_ns = bench_loop(3, target_ns, 10, || unsafe {
+                            LZ4_decompress_safe_usingDict(
+                                compressed.as_ptr(),
+                                decomp_buf.as_mut_ptr(),
+                                compressed.len() as c_int,
+                                decomp_buf.len() as c_int,
+                                dict.as_ptr(),
+                                dict.len() as c_int,
+                            );
+                        });
+
+                        BenchResult {
+                            codec: "C lz4 (dict 2K)".to_string(),
+                            input_name: name.clone(),
+                            input_size: data.len(),
+                            compressed_size: comp_len,
+                            compress_ns,
+                            decompress_ns,
+                        }
                     }
-                }
-                _ => unreachable!(),
-            };
+                    "lz4rip (dict 2K)" => {
+                        let mut comp_buf = vec![0u8; max_out];
+                        let comp_len = compressor.compress_into(&data, &mut comp_buf).unwrap();
+                        let compressed = comp_buf[..comp_len].to_vec();
+                        let mut decomp_buf = vec![0u8; data.len()];
 
-            all_results.push(r);
+                        let compress_ns = bench_loop(3, target_ns, 10, || {
+                            let _ = std::hint::black_box(&mut compressor).compress_into(
+                                std::hint::black_box(&data),
+                                std::hint::black_box(&mut comp_buf),
+                            );
+                        });
+
+                        let decompress_ns = bench_loop(3, target_ns, 10, || {
+                            let _ = decompressor.decompress_into(
+                                std::hint::black_box(&compressed),
+                                std::hint::black_box(&mut decomp_buf),
+                            );
+                        });
+
+                        BenchResult {
+                            codec: "lz4rip (dict 2K)".to_string(),
+                            input_name: name.clone(),
+                            input_size: data.len(),
+                            compressed_size: comp_len,
+                            compress_ns,
+                            decompress_ns,
+                        }
+                    }
+                    _ => unreachable!(),
+                };
+
+                all_results.push(r);
+            }
         }
     }
 
@@ -1071,6 +1008,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut only: Vec<String> = Vec::new();
     let mut dict_path: Option<String> = None;
+    let mut dict_silesia = false;
     let mut sweep_dict: Option<String> = None;
     let mut structured = false;
     let mut structured_dict = false;
@@ -1090,6 +1028,9 @@ fn main() {
                 if i < args.len() {
                     dict_path = Some(args[i].clone());
                 }
+            }
+            "--dict-silesia" => {
+                dict_silesia = true;
             }
             "--sweep" => {
                 if i + 1 < args.len() && !args[i + 1].starts_with('-') {
@@ -1123,36 +1064,39 @@ fn main() {
     }
 
     if structured {
-        run_structured(&only);
+        let inputs = load_silesia_inputs();
+        run_structured(&only, &inputs);
         return;
     }
 
     if structured_dict {
-        run_structured_dict(&only);
+        let inputs = load_silesia_inputs();
+        let dict = train_silesia_dict_from_inputs(&inputs);
+        run_structured_dict(&only, &inputs, &dict);
         return;
     }
 
     if sweep_dict.is_some() {
+        let inputs = load_silesia_inputs();
         let dict = match sweep_dict {
             Some(ref dp) if !dp.is_empty() => {
                 std::fs::read(dp).unwrap_or_else(|e| panic!("cannot read dict {dp}: {e}"))
             }
             _ => {
                 eprintln!("  training sweep dict (2048 bytes)...");
-                let mut trainer = lz4rip::block::DictTrainer::new(2048);
-                for i in 0..2000u64 {
-                    let sample = json_payload(128 + (i as usize * 7) % 1920, i * 2654435761);
-                    trainer.add_sample(&sample);
-                }
-                trainer.train()
+                train_silesia_dict_from_inputs(&inputs)
             }
         };
-        run_sweep(&dict);
+        run_sweep(&dict, &inputs);
         return;
     }
 
-    let dict_data = dict_path
-        .map(|p| std::fs::read(&p).unwrap_or_else(|e| panic!("cannot read dict {p}: {e}")));
+    let dict_data = if dict_silesia {
+        let inputs = load_silesia_inputs();
+        Some(train_silesia_dict_from_inputs(&inputs))
+    } else {
+        dict_path.map(|p| std::fs::read(&p).unwrap_or_else(|e| panic!("cannot read dict {p}: {e}")))
+    };
 
     let codecs: &[&str] = if dict_data.is_some() {
         DICT_CODECS

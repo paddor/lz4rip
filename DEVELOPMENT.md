@@ -18,29 +18,43 @@ running). Always set it:
 export LZ4RIP_HW_EXTRAS="performance governor,turbo off"
 ```
 
-The bench writes results to `~/.cache/lz4rip/<arch>/` (and subdirs for sweep/structured).
-Chart generation reads from cache. Two separate steps, no piping.
+The bench downloads the 12-file Silesia corpus into ignored `corpus/silesia/`
+on first run. It writes results to `~/.cache/lz4rip/<arch>/` (and subdirs for
+sweep/structured). Chart generation reads from cache. Two separate steps, no
+piping.
 
 Bench all impls (including paranoid) and generate all charts:
 ```sh
-taskset -c 0 cargo run --release --example lz4rip_bench && \
-taskset -c 0 cargo run --release --example lz4rip_bench --features paranoid && \
-taskset -c 0 cargo run --release --example lz4rip_bench -- --structured && \
-taskset -c 0 cargo run --release --example lz4rip_bench -- --structured-dict && \
-taskset -c 0 cargo run --release --example lz4rip_bench -- --sweep && \
-LZ4RIP_HW_EXTRAS="performance governor,turbo off" python3 benches/plot_bench.py --all doc/charts/x86_64
+taskset -c 0 cargo run --release --example lz4rip_bench
+taskset -c 0 cargo run --release --example lz4rip_bench --features paranoid
+taskset -c 0 cargo run --release --example lz4rip_bench -- --dict-silesia
+taskset -c 0 cargo run --release --example lz4rip_bench -- --structured
+taskset -c 0 cargo run --release --example lz4rip_bench -- --structured-dict
+taskset -c 0 cargo run --release --example lz4rip_bench -- --sweep
+cargo run --manifest-path bench/Cargo.toml --bin lz4rip_charts -- all doc/charts/x86_64
 ```
 
 Rerun only lz4rip (other impls served from cache), then regenerate charts:
 ```sh
-taskset -c 0 cargo run --release --example lz4rip_bench -- --impl lz4rip && \
-LZ4RIP_HW_EXTRAS="performance governor,turbo off" python3 benches/plot_bench.py --all doc/charts/x86_64
+taskset -c 0 cargo run --release --example lz4rip_bench -- --impl lz4rip
+cargo run --manifest-path bench/Cargo.toml --bin lz4rip_charts -- all doc/charts/x86_64
 ```
 
 Clear a specific impl's cache to force re-bench:
 ```sh
 rm ~/.cache/lz4rip/x86_64/lz4rip.jsonl
 ```
+
+Optional local hardware labels can live in ignored `.chart_hw`:
+
+```text
+prefix=Linux VM on a 2018 Mac Mini
+postfix=performance governor, turbo off
+```
+
+The chart tool reads `.chart_hw` from the current dir or parent dir. Env vars
+`LZ4RIP_HW_PREFIX`, `LZ4RIP_HW_POSTFIX`, and `LZ4RIP_HW_EXTRAS` override or
+extend local detection.
 
 ## Miri
 
@@ -52,7 +66,7 @@ MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --lib
 
 # unit + integration tests (~20 min)
 # C FFI tests (cpp_compat.rs) are excluded via #![cfg(not(miri))].
-# Large corpus tests (dickens, hdfs, proptest) are excluded via #[cfg_attr(miri, ignore)].
+# Large corpus tests (dickens, proptest) are excluded via #[cfg_attr(miri, ignore)].
 MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test
 ```
 

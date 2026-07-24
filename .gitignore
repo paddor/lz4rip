@@ -1,6 +1,7 @@
 .DS_Store
 __pycache__/
 /target
+/bench/target
 benchmarks/target
 Cargo.lock
 my-prof.profile
@@ -8,7 +9,7 @@ Session.vim
 /benchmarks/bench_files
 /info/
 /corpus/*
-!/corpus/hdfs.json
+.chart_hw
 /sweep_bins/
 /sweep_results.json
 *.sweep_bak
