@@ -119,7 +119,7 @@ let initialized = false;
 export async function init(): Promise<void> {
   if (initialized) return;
 
-  const wasmUrl = new URL("./pkg/lz4rip.wasm", import.meta.url);
+  const wasmUrl = new URL("./pkg/lz4rip_wasm_bg.wasm", import.meta.url);
   const response = await fetch(wasmUrl);
   const bytes = await response.arrayBuffer();
   initSync({ module: new WebAssembly.Module(bytes) });

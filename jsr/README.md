@@ -67,7 +67,7 @@ When you have pre-loaded WASM bytes (e.g. bundled or read from disk):
 ```ts
 import { initSyncFromBytes, compress } from "@paddor/lz4rip";
 
-const wasmBytes = Deno.readFileSync("path/to/lz4rip.wasm");
+const wasmBytes = Deno.readFileSync("path/to/codec.wasm");
 initSyncFromBytes(wasmBytes);
 
 const compressed = compress(data);
