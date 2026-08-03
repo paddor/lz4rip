@@ -2,8 +2,11 @@
 
 [package]
 name = "lz4rip-wasm"
-version = "0.2.7"
+version = "0.2.8"
 edition = "2024"
+description = "WebAssembly bindings for lz4rip"
+repository = "https://github.com/paddor/lz4rip"
+license-file = "../../LICENSE"
 publish = false
 
 [lib]

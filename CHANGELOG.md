@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Bumped the JSR/WASM package metadata to 0.2.8.
+
+### Fixed
+
+- The JSR package now ships `lz4rip_wasm_bg.wasm` under the filename expected
+  by wasm-bindgen glue, avoiding bundler warnings for a missing WASM asset.
+
 ## [0.11.2] - 2026-07-20
 
 ### Added

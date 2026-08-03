@@ -16,9 +16,9 @@ cd ..
 cp "$TMP/lz4rip_wasm.js" "$PKG/"
 cp "$TMP/lz4rip_wasm.d.ts" "$PKG/"
 cp "$TMP/lz4rip_wasm_bg.wasm.d.ts" "$PKG/"
-mv "$TMP/lz4rip_wasm_bg.wasm" "$PKG/lz4rip.wasm"
+mv "$TMP/lz4rip_wasm_bg.wasm" "$PKG/"
 
 rm -rf "$TMP"
 
-WASM_SIZE=$(wc -c < "$PKG/lz4rip.wasm")
+WASM_SIZE=$(wc -c < "$PKG/lz4rip_wasm_bg.wasm")
 echo "==> Done. ${WASM_SIZE} bytes"
