@@ -23,6 +23,15 @@ fn vec_sink_for_decompression(
     SliceSink::new(&mut vec[offset..], pos)
 }
 
+/// Options for [`FrameDecoder`].
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FrameDecoderOptions<'a> {
+    /// External dictionary bytes and Dict_ID.
+    pub dictionary: Option<(&'a [u8], u32)>,
+    /// Total decompressed output size limit across all frames.
+    pub max_output: Option<usize>,
+}
+
 /// A reader for decompressing the LZ4 frame format
 ///
 /// This Decoder wraps any other reader that implements `io::Read`.
@@ -64,6 +73,8 @@ pub struct FrameDecoder<R: io::Read> {
     dst_end: usize,
     dict: Vec<u8>,
     expected_dict_id: Option<u32>,
+    max_output: usize,
+    bytes_output: usize,
 }
 
 impl<R: io::Read> FrameDecoder<R> {
@@ -82,14 +93,32 @@ impl<R: io::Read> FrameDecoder<R> {
             content_len: 0,
             dict: Vec::new(),
             expected_dict_id: None,
+            max_output: usize::MAX,
+            bytes_output: 0,
         }
     }
 
     /// Creates a new Decoder that decodes frames using the supplied external dictionary.
     pub fn with_dictionary(rdr: R, dict: &[u8], dict_id: u32) -> FrameDecoder<R> {
+        Self::with_options(
+            rdr,
+            FrameDecoderOptions {
+                dictionary: Some((dict, dict_id)),
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Creates a new Decoder with explicit options.
+    pub fn with_options(rdr: R, options: FrameDecoderOptions<'_>) -> FrameDecoder<R> {
         let mut dec = Self::new(rdr);
-        dec.dict = dict.to_vec();
-        dec.expected_dict_id = Some(dict_id);
+        if let Some((dict, dict_id)) = options.dictionary {
+            dec.dict = dict.to_vec();
+            dec.expected_dict_id = Some(dict_id);
+        }
+        if let Some(max_output) = options.max_output {
+            dec.max_output = max_output;
+        }
         dec
     }
 
@@ -155,6 +184,25 @@ impl<R: io::Read> FrameDecoder<R> {
         Ok(required)
     }
 
+    fn add_output_len(&mut self, len: usize) -> io::Result<()> {
+        let Some(actual) = self.bytes_output.checked_add(len) else {
+            return Err(Error::DecompressedSizeLimit {
+                limit: self.max_output,
+                actual: usize::MAX,
+            }
+            .into());
+        };
+        if actual > self.max_output {
+            return Err(Error::DecompressedSizeLimit {
+                limit: self.max_output,
+                actual,
+            }
+            .into());
+        }
+        self.bytes_output = actual;
+        Ok(())
+    }
+
     #[inline]
     fn read_checksum(r: &mut R) -> Result<u32, io::Error> {
         let mut checksum_buffer = [0u8; size_of::<u32>()];
@@ -176,7 +224,7 @@ impl<R: io::Read> FrameDecoder<R> {
 
     fn read_block(&mut self) -> io::Result<usize> {
         debug_assert_eq!(self.dst_start, self.dst_end);
-        let frame_info = self
+        let frame_info = *self
             .current_frame_info
             .as_ref()
             .ok_or_else(|| io::Error::other("no frame header has been read"))?;
@@ -216,6 +264,7 @@ impl<R: io::Read> FrameDecoder<R> {
                 if len > max_block_size {
                     return Err(Error::BlockTooBig.into());
                 }
+                self.add_output_len(len)?;
                 self.r.read_exact(vec_resize_and_get_mut(
                     &mut self.dst,
                     self.dst_start,
@@ -284,6 +333,7 @@ impl<R: io::Read> FrameDecoder<R> {
                 }
                 .map_err(Error::DecompressionError)?;
 
+                self.add_output_len(decomp_size)?;
                 self.dst_end += decomp_size;
                 self.content_len += decomp_size as u64;
             }
@@ -319,10 +369,15 @@ impl<R: io::Read> FrameDecoder<R> {
     }
 
     fn read_more(&mut self) -> io::Result<usize> {
-        if self.current_frame_info.is_none() && self.read_frame_info()? == 0 {
-            return Ok(0);
+        loop {
+            if self.current_frame_info.is_none() && self.read_frame_info()? == 0 {
+                return Ok(0);
+            }
+            let read = self.read_block()?;
+            if read != 0 || self.current_frame_info.is_some() {
+                return Ok(read);
+            }
         }
-        self.read_block()
     }
 }
 
@@ -387,6 +442,8 @@ impl<R: fmt::Debug + io::Read> fmt::Debug for FrameDecoder<R> {
             .field("ext_dict_offset", &self.ext_dict_offset)
             .field("ext_dict_len", &self.ext_dict_len)
             .field("current_frame_info", &self.current_frame_info)
+            .field("max_output", &self.max_output)
+            .field("bytes_output", &self.bytes_output)
             .finish()
     }
 }

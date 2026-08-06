@@ -2,14 +2,26 @@
 
 ## [Unreleased]
 
+### Added
+
+- JSR/WASM frame compression and decompression APIs with dictionary and
+  decompressed-size-limit options.
+- First-class JSR/WASM `Dictionary` object for LZ4 frame dictionary bytes and
+  dictionary IDs.
+- `FrameDecoderOptions` and `FrameDecoder::with_options` for configuring
+  dictionaries and capping total decompressed output across concatenated LZ4
+  frames.
+
 ### Changed
 
-- Bumped the JSR/WASM package metadata to 0.2.8.
+- Bumped the JSR/WASM package metadata to 0.2.9.
 
 ### Fixed
 
 - The JSR package now ships `lz4rip_wasm_bg.wasm` under the filename expected
   by wasm-bindgen glue, avoiding bundler warnings for a missing WASM asset.
+- `FrameDecoder` now reads concatenated LZ4 frames as one full stream,
+  including empty frames before later data.
 
 ## [0.11.2] - 2026-07-20
 

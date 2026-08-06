@@ -1,12 +1,12 @@
 # @paddor/lz4rip
 
-Pure Rust LZ4 block codec compiled to WebAssembly. Optimized for small
+Pure Rust LZ4 block and frame codec compiled to WebAssembly. Optimized for small
 messages (<8 KB) in tight loops with dictionary compression.
 
 ## Usage
 
 ```ts
-import { init, compress, decompress } from "@paddor/lz4rip";
+import { compress, decompress, init } from "@paddor/lz4rip";
 
 await init();
 
@@ -15,12 +15,51 @@ const compressed = compress(data);
 const original = decompress(compressed, data.length);
 ```
 
+### Frame format
+
+Use LZ4 frames when the decoder should not need the uncompressed size:
+
+```ts
+import { compressFrame, decompressFrame, init } from "@paddor/lz4rip";
+
+await init();
+
+const compressed = compressFrame(data, {
+  contentChecksum: true,
+  contentSize: true,
+});
+const original = decompressFrame(compressed, {
+  maxDecompressedSize: data.length,
+});
+```
+
+Frame dictionaries include a caller-assigned 32-bit dictionary ID:
+
+```ts
+import {
+  compressFrame,
+  decompressFrame,
+  Dictionary,
+  init,
+} from "@paddor/lz4rip";
+
+await init();
+
+const dictionary = new Dictionary(dictBytes, { id: 0x1234 });
+const compressed = compressFrame(data, { dictionary });
+const original = decompressFrame(compressed, {
+  dictionary,
+  maxDecompressedSize: data.length,
+});
+dictionary.free();
+```
+
 ### Reusable contexts
 
 Amortize internal allocations across multiple compress/decompress calls:
 
 ```ts
-import { init, Compressor, Decompressor } from "@paddor/lz4rip";
+import { Compressor, Decompressor, init } from "@paddor/lz4rip";
 
 await init();
 
@@ -37,11 +76,11 @@ decompressor.free();
 
 ### Dictionary compression
 
-For small-message workloads (log lines, JSON records, RPC payloads) that
-share common structure:
+For small-message workloads (log lines, JSON records, RPC payloads) that share
+common structure:
 
 ```ts
-import { init, Compressor, Decompressor, DictTrainer } from "@paddor/lz4rip";
+import { Compressor, Decompressor, DictTrainer, init } from "@paddor/lz4rip";
 
 await init();
 
@@ -65,7 +104,7 @@ decompressor.free();
 When you have pre-loaded WASM bytes (e.g. bundled or read from disk):
 
 ```ts
-import { initSyncFromBytes, compress } from "@paddor/lz4rip";
+import { compress, initSyncFromBytes } from "@paddor/lz4rip";
 
 const wasmBytes = Deno.readFileSync("path/to/codec.wasm");
 initSyncFromBytes(wasmBytes);
@@ -75,4 +114,5 @@ const compressed = compress(data);
 
 ## Source
 
-Rust source and native benchmarks: [github.com/paddor/lz4rip](https://github.com/paddor/lz4rip)
+Rust source and native benchmarks:
+[github.com/paddor/lz4rip](https://github.com/paddor/lz4rip)
