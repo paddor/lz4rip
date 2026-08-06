@@ -40,7 +40,7 @@ pub(crate) mod decompress;
 pub(crate) mod header;
 
 pub use compress::{AutoFinishEncoder, FrameEncoder};
-pub use decompress::FrameDecoder;
+pub use decompress::{FrameDecoder, FrameDecoderOptions};
 pub use header::{BlockMode, BlockSize, FrameInfo};
 
 #[derive(Debug)]
@@ -87,6 +87,13 @@ pub enum Error {
         /// Dict_ID of the dictionary provided to the decoder.
         actual: u32,
     },
+    /// Decompressed output would exceed the configured size limit.
+    DecompressedSizeLimit {
+        /// Configured decompressed output limit.
+        limit: usize,
+        /// Decompressed size that would have been produced.
+        actual: usize,
+    },
     /// Content length differs.
     ContentLengthError {
         /// Expected content length.
@@ -105,6 +112,7 @@ impl From<Error> for io::Error {
             | Error::SkippableFrame(_)
             | Error::DictionaryNotSupported
             | Error::DictionaryRequired
+            | Error::DecompressedSizeLimit { .. }
             | Error::DictIdMismatch { .. } => io::Error::other(e),
             Error::DictionaryRequiresIndependentBlocks => {
                 io::Error::new(io::ErrorKind::InvalidInput, e)
@@ -161,6 +169,12 @@ impl fmt::Display for Error {
                 write!(
                     f,
                     "dictionary ID mismatch: frame declares {expected:#010x}, decoder has {actual:#010x}"
+                )
+            }
+            Error::DecompressedSizeLimit { limit, actual } => {
+                write!(
+                    f,
+                    "decompressed size limit exceeded: limit {limit}, got {actual}"
                 )
             }
             Error::ContentLengthError { expected, actual } => {

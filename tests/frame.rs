@@ -22,10 +22,63 @@ fn concatenated() {
     let mut dec = lz4rip::frame::FrameDecoder::new(&*compressed);
     let mut uncompressed = Vec::new();
     dec.read_to_end(&mut uncompressed).unwrap();
-    assert_eq!(&*uncompressed, compression1k());
-    uncompressed.clear();
+    let mut expected = Vec::new();
+    expected.extend_from_slice(compression1k());
+    expected.extend_from_slice(compression34k());
+    assert_eq!(uncompressed, expected);
+}
+
+#[test]
+fn concatenated_empty_frame_before_data() {
+    let mut enc = lz4rip::frame::FrameEncoder::new(Vec::new());
+    enc.try_finish().unwrap();
+    enc.write_all(compression1k()).unwrap();
+    let compressed = enc.finish().unwrap();
+
+    let mut dec = lz4rip::frame::FrameDecoder::new(&*compressed);
+    let mut uncompressed = Vec::new();
     dec.read_to_end(&mut uncompressed).unwrap();
-    assert_eq!(&*uncompressed, compression34k());
+    assert_eq!(&*uncompressed, compression1k());
+}
+
+#[test]
+fn concatenated_respects_total_limit() {
+    let mut enc = lz4rip::frame::FrameEncoder::new(Vec::new());
+    enc.write_all(compression1k()).unwrap();
+    enc.try_finish().unwrap();
+    enc.write_all(compression34k()).unwrap();
+    let compressed = enc.finish().unwrap();
+    let total = compression1k().len() + compression34k().len();
+
+    let mut dec = lz4rip::frame::FrameDecoder::with_options(
+        &*compressed,
+        lz4rip::frame::FrameDecoderOptions {
+            max_output: Some(total),
+            ..Default::default()
+        },
+    );
+    let mut uncompressed = Vec::new();
+    dec.read_to_end(&mut uncompressed).unwrap();
+    assert_eq!(uncompressed.len(), total);
+
+    let mut dec = lz4rip::frame::FrameDecoder::with_options(
+        &*compressed,
+        lz4rip::frame::FrameDecoderOptions {
+            max_output: Some(total - 1),
+            ..Default::default()
+        },
+    );
+    let mut uncompressed = Vec::new();
+    let err = dec.read_to_end(&mut uncompressed).unwrap_err();
+    let inner = err
+        .into_inner()
+        .and_then(|e| e.downcast::<lz4rip::frame::Error>().ok());
+    assert!(matches!(
+        inner.as_deref(),
+        Some(lz4rip::frame::Error::DecompressedSizeLimit { limit, actual })
+            if *limit == total - 1 && *actual == total
+    ));
+    assert_eq!(uncompressed.len(), compression1k().len());
 }
 
 #[test]
@@ -128,6 +181,47 @@ fn dict_round_trip() {
     let mut out = Vec::new();
     dec.read_to_end(&mut out).unwrap();
     assert_eq!(out, msg);
+}
+
+#[test]
+fn dict_respects_limit() {
+    let dict = b"JSON schema v1 field name= value= type= len= ".repeat(4);
+    let dict_id: u32 = 0xDEADBEEF;
+    let msg = b"JSON schema v1 field name=hello value=world type=str len=5";
+
+    let mut enc =
+        lz4rip::frame::FrameEncoder::with_dictionary(Vec::new(), &dict, dict_id, None).unwrap();
+    enc.write_all(msg).unwrap();
+    let compressed = enc.finish().unwrap();
+
+    let mut dec = lz4rip::frame::FrameDecoder::with_options(
+        &*compressed,
+        lz4rip::frame::FrameDecoderOptions {
+            dictionary: Some((&dict, dict_id)),
+            max_output: Some(msg.len()),
+        },
+    );
+    let mut out = Vec::new();
+    dec.read_to_end(&mut out).unwrap();
+    assert_eq!(out, msg);
+
+    let mut dec = lz4rip::frame::FrameDecoder::with_options(
+        &*compressed,
+        lz4rip::frame::FrameDecoderOptions {
+            dictionary: Some((&dict, dict_id)),
+            max_output: Some(msg.len() - 1),
+        },
+    );
+    let mut out = Vec::new();
+    let err = dec.read_to_end(&mut out).unwrap_err();
+    let inner = err
+        .into_inner()
+        .and_then(|e| e.downcast::<lz4rip::frame::Error>().ok());
+    assert!(matches!(
+        inner.as_deref(),
+        Some(lz4rip::frame::Error::DecompressedSizeLimit { limit, actual })
+            if *limit == msg.len() - 1 && *actual == msg.len()
+    ));
 }
 
 #[test]
