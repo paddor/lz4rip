@@ -1,8 +1,8 @@
 {
   "name": "@paddor/lz4rip",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "license": "MIT",
-  "description": "Pure Rust LZ4 block codec compiled to WebAssembly. Compress and decompress with optional dictionary support.",
+  "description": "Pure Rust LZ4 block and frame codec compiled to WebAssembly. Compress and decompress with optional dictionary support.",
   "exports": "./src/mod.ts",
   "publish": {
     "include": ["src/", "deno.json", "LICENSE", "README.md"],

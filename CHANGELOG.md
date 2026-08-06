@@ -4,13 +4,15 @@
 
 ### Added
 
+- JSR/WASM frame compression and decompression APIs with dictionary and
+  decompressed-size-limit options.
 - `FrameDecoderOptions` and `FrameDecoder::with_options` for configuring
   dictionaries and capping total decompressed output across concatenated LZ4
   frames.
 
 ### Changed
 
-- Bumped the JSR/WASM package metadata to 0.2.8.
+- Bumped the JSR/WASM package metadata to 0.2.9.
 
 ### Fixed
 

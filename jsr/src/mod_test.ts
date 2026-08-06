@@ -6,12 +6,25 @@ import {
 import {
   compress,
   compressBound,
+  compressFrame,
   Compressor,
   decompress,
+  decompressFrame,
   Decompressor,
   DictTrainer,
   init,
 } from "./mod.ts";
+
+function concatArrays(...parts: Uint8Array[]): Uint8Array {
+  const length = parts.reduce((sum, part) => sum + part.length, 0);
+  const output = new Uint8Array(length);
+  let offset = 0;
+  for (const part of parts) {
+    output.set(part, offset);
+    offset += part.length;
+  }
+  return output;
+}
 
 Deno.test("init", async () => {
   await init();
@@ -46,6 +59,89 @@ Deno.test("incompressible data", () => {
   const compressed = compress(random);
   const decompressed = decompress(compressed, random.length);
   assertEquals(decompressed, random);
+});
+
+// --- Frame format ---
+
+Deno.test("frame round-trip", () => {
+  const data = new TextEncoder().encode("hello frame lz4".repeat(100));
+  const compressed = compressFrame(data);
+  const decompressed = decompressFrame(compressed);
+  assertEquals(decompressed, data);
+});
+
+Deno.test("frame supports options", () => {
+  const data = new TextEncoder().encode("checksummed frame".repeat(100));
+  const compressed = compressFrame(data, {
+    blockChecksums: true,
+    contentChecksum: true,
+    contentSize: true,
+    linkedBlocks: true,
+  });
+  const decompressed = decompressFrame(compressed, {
+    maxDecompressedSize: data.length,
+  });
+  assertEquals(decompressed, data);
+});
+
+Deno.test("frame decompresses concatenated frames", () => {
+  const data1 = new TextEncoder().encode("first frame".repeat(100));
+  const data2 = new TextEncoder().encode("second frame".repeat(100));
+  const stream = concatArrays(compressFrame(data1), compressFrame(data2));
+  assertEquals(decompressFrame(stream), concatArrays(data1, data2));
+});
+
+Deno.test("frame decompression limit applies to full stream", () => {
+  const data1 = new TextEncoder().encode("first bounded frame".repeat(100));
+  const data2 = new TextEncoder().encode("second bounded frame".repeat(100));
+  const stream = concatArrays(compressFrame(data1), compressFrame(data2));
+  const expected = concatArrays(data1, data2);
+
+  assertThrows(
+    () => decompressFrame(stream, { maxDecompressedSize: expected.length - 1 }),
+    Error,
+  );
+  assertEquals(
+    decompressFrame(stream, { maxDecompressedSize: expected.length }),
+    expected,
+  );
+});
+
+Deno.test("frame dictionary round-trip", () => {
+  const dictionary = new TextEncoder().encode(
+    "event_type=metric service=ingest shard= value=".repeat(20),
+  );
+  const data = new TextEncoder().encode(
+    "event_type=metric service=ingest shard=3 value=42\n".repeat(100),
+  );
+  const dictId = 0xdead_beef;
+  const compressed = compressFrame(data, {
+    dictionary,
+    dictId,
+    linkedBlocks: true,
+    contentChecksum: true,
+    contentSize: true,
+  });
+
+  assertEquals(decompressFrame(compressed, { dictionary, dictId }), data);
+  assertThrows(
+    () => decompressFrame(compressed, { dictionary, dictId: 0xbeef_dead }),
+    Error,
+  );
+});
+
+Deno.test("frame dictionary options require dictId", () => {
+  const dictionary = new TextEncoder().encode("dictionary");
+  const data = new TextEncoder().encode("data");
+
+  assertThrows(
+    () => compressFrame(data, { dictionary }),
+    TypeError,
+  );
+  assertThrows(
+    () => decompressFrame(compressFrame(data), { dictionary }),
+    TypeError,
+  );
 });
 
 // --- Stateful ---

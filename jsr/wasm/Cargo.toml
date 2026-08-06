@@ -2,7 +2,7 @@
 
 [package]
 name = "lz4rip-wasm"
-version = "0.2.8"
+version = "0.2.9"
 edition = "2024"
 description = "WebAssembly bindings for lz4rip"
 repository = "https://github.com/paddor/lz4rip"
@@ -13,7 +13,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-lz4rip = { path = "../..", default-features = false, features = ["alloc"] }
+lz4rip = { path = "../..", default-features = false, features = ["frame"] }
 wasm-bindgen = "0.2"
 
 [package.metadata.wasm-pack.profile.release]
