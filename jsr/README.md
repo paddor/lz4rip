@@ -33,6 +33,27 @@ const original = decompressFrame(compressed, {
 });
 ```
 
+Frame dictionaries include a caller-assigned 32-bit dictionary ID:
+
+```ts
+import {
+  compressFrame,
+  decompressFrame,
+  Dictionary,
+  init,
+} from "@paddor/lz4rip";
+
+await init();
+
+const dictionary = new Dictionary(dictBytes, { id: 0x1234 });
+const compressed = compressFrame(data, { dictionary });
+const original = decompressFrame(compressed, {
+  dictionary,
+  maxDecompressedSize: data.length,
+});
+dictionary.free();
+```
+
 ### Reusable contexts
 
 Amortize internal allocations across multiple compress/decompress calls:

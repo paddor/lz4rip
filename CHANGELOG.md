@@ -6,6 +6,8 @@
 
 - JSR/WASM frame compression and decompression APIs with dictionary and
   decompressed-size-limit options.
+- First-class JSR/WASM `Dictionary` object for LZ4 frame dictionary bytes and
+  dictionary IDs.
 - `FrameDecoderOptions` and `FrameDecoder::with_options` for configuring
   dictionaries and capping total decompressed output across concatenated LZ4
   frames.

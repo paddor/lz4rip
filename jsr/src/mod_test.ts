@@ -11,6 +11,7 @@ import {
   decompress,
   decompressFrame,
   Decompressor,
+  Dictionary,
   DictTrainer,
   init,
 } from "./mod.ts";
@@ -114,32 +115,48 @@ Deno.test("frame dictionary round-trip", () => {
   const data = new TextEncoder().encode(
     "event_type=metric service=ingest shard=3 value=42\n".repeat(100),
   );
-  const dictId = 0xdead_beef;
+  const dict = new Dictionary(dictionary, { id: 0xdead_beef });
   const compressed = compressFrame(data, {
-    dictionary,
-    dictId,
+    dictionary: dict,
     linkedBlocks: true,
     contentChecksum: true,
     contentSize: true,
   });
 
-  assertEquals(decompressFrame(compressed, { dictionary, dictId }), data);
+  assertEquals(decompressFrame(compressed, { dictionary: dict }), data);
   assertThrows(
-    () => decompressFrame(compressed, { dictionary, dictId: 0xbeef_dead }),
+    () =>
+      decompressFrame(compressed, {
+        dictionary: new Dictionary(dictionary, { id: 0xbeef_dead }),
+      }),
     Error,
   );
+
+  dict.free();
 });
 
-Deno.test("frame dictionary options require dictId", () => {
+Deno.test("frame dictionary validates id and lifetime", () => {
   const dictionary = new TextEncoder().encode("dictionary");
   const data = new TextEncoder().encode("data");
 
   assertThrows(
-    () => compressFrame(data, { dictionary }),
+    () => new Dictionary(dictionary, { id: -1 }),
+    RangeError,
+  );
+  assertThrows(
+    () => new Dictionary(dictionary, { id: 0x1_0000_0000 }),
+    RangeError,
+  );
+
+  const dict = new Dictionary(dictionary, { id: 1 });
+  dict.free();
+
+  assertThrows(
+    () => compressFrame(data, { dictionary: dict }),
     TypeError,
   );
   assertThrows(
-    () => decompressFrame(compressFrame(data), { dictionary }),
+    () => decompressFrame(compressFrame(data), { dictionary: dict }),
     TypeError,
   );
 });

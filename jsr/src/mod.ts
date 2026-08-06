@@ -49,6 +49,21 @@
  * const decompressor = Decompressor.withDict(dictBytes);
  * const original = decompressor.decompress(compressed, data.length);
  * ```
+ *
+ * LZ4 frame dictionaries carry a caller-assigned 32-bit dictionary ID:
+ *
+ * ```ts
+ * import { init, compressFrame, decompressFrame, Dictionary } from "@paddor/lz4rip";
+ *
+ * await init();
+ *
+ * const dict = new Dictionary(dictBytes, { id: 0x1234 });
+ * const compressed = compressFrame(data, { dictionary: dict });
+ * const original = decompressFrame(compressed, {
+ *   dictionary: dict,
+ *   maxDecompressedSize: data.length,
+ * });
+ * ```
  */
 
 import {
@@ -113,11 +128,14 @@ export const DictTrainer: typeof _DictTrainer = _DictTrainer;
 /** Type alias for {@linkcode DictTrainer} instances. */
 export type DictTrainer = _DictTrainer;
 
+export interface DictionaryOptions {
+  /** 32-bit dictionary identifier stored in LZ4 frame headers. */
+  id: number;
+}
+
 export interface FrameOptions {
-  /** External dictionary bytes. Must be paired with `dictId`. */
-  dictionary?: Uint8Array;
-  /** 32-bit dictionary identifier stored in the frame header. */
-  dictId?: number;
+  /** External dictionary for LZ4 frame compression. */
+  dictionary?: Dictionary;
   /** Enable linked blocks so blocks can reference previous block output. */
   linkedBlocks?: boolean;
   /** Include per-block checksums. */
@@ -129,10 +147,8 @@ export interface FrameOptions {
 }
 
 export interface FrameDecompressOptions {
-  /** External dictionary bytes. Must be paired with `dictId`. */
-  dictionary?: Uint8Array;
-  /** 32-bit dictionary identifier expected in the frame header. */
-  dictId?: number;
+  /** External dictionary expected by the frame stream. */
+  dictionary?: Dictionary;
   /** Maximum decompressed bytes allowed across the full input stream. */
   maxDecompressedSize?: number;
 }
@@ -146,6 +162,13 @@ const FRAME_FLAG_BLOCK_CHECKSUMS = 1 << 2;
 const FRAME_FLAG_CONTENT_CHECKSUM = 1 << 3;
 const FRAME_FLAG_CONTENT_SIZE = 1 << 4;
 
+interface DictionaryInner {
+  bytes: Uint8Array;
+  id: number;
+}
+
+const dictionaryInner = new WeakMap<Dictionary, DictionaryInner>();
+
 function validateUint32(name: string, value: number): number {
   if (!Number.isInteger(value) || value < 0 || value > MAX_U32) {
     throw new RangeError(`${name} must be an integer from 0 to 4294967295`);
@@ -153,22 +176,62 @@ function validateUint32(name: string, value: number): number {
   return value;
 }
 
+function getDictionaryInner(dictionary: Dictionary): DictionaryInner {
+  const inner = dictionaryInner.get(dictionary);
+  if (!inner) {
+    throw new TypeError("invalid or freed Dictionary");
+  }
+  return inner;
+}
+
+/**
+ * LZ4 frame dictionary. Pairs dictionary bytes with the 32-bit dictionary ID
+ * written to and checked from frame headers.
+ *
+ * @example
+ * ```ts
+ * const dict = new Dictionary(dictBytes, { id: 0x1234 });
+ * const compressed = compressFrame(data, { dictionary: dict });
+ * dict.free();
+ * ```
+ */
+export class Dictionary {
+  constructor(bytes: Uint8Array, options: DictionaryOptions) {
+    if (options === undefined) {
+      throw new TypeError("Dictionary options must include id");
+    }
+    dictionaryInner.set(this, {
+      bytes: new Uint8Array(bytes),
+      id: validateUint32("id", options.id),
+    });
+  }
+
+  get id(): number {
+    return getDictionaryInner(this).id;
+  }
+
+  get bytes(): Uint8Array {
+    return new Uint8Array(getDictionaryInner(this).bytes);
+  }
+
+  free(): void {
+    dictionaryInner.delete(this);
+  }
+
+  [Symbol.dispose](): void {
+    this.free();
+  }
+}
+
 function frameDictionary(
-  options?: Pick<FrameOptions, "dictionary" | "dictId">,
+  options?: Pick<FrameOptions, "dictionary">,
 ): { bytes: Uint8Array; id: number; enabled: boolean } {
   const dictionary = options?.dictionary;
-  const dictId = options?.dictId;
-  if (dictionary === undefined && dictId === undefined) {
+  if (dictionary === undefined) {
     return { bytes: EMPTY_BYTES, id: 0, enabled: false };
   }
-  if (dictionary === undefined || dictId === undefined) {
-    throw new TypeError("dictionary and dictId must be provided together");
-  }
-  return {
-    bytes: dictionary,
-    id: validateUint32("dictId", dictId),
-    enabled: true,
-  };
+  const inner = getDictionaryInner(dictionary);
+  return { bytes: inner.bytes, id: inner.id, enabled: true };
 }
 
 function maxDecompressedSize(
