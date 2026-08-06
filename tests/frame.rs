@@ -325,3 +325,100 @@ fn block_size_auto_resolution() {
         );
     }
 }
+
+#[test]
+fn push_decode_roundtrip() {
+    use lz4rip::frame::push::*;
+
+    let input = compression34k();
+    let mut enc = lz4rip::frame::FrameEncoder::new(Vec::new());
+    enc.write_all(input).unwrap();
+    let compressed = enc.finish().unwrap();
+
+    let mut pos = 0;
+
+    let hdr_size = frame_header_size(&compressed[pos..]).unwrap();
+    let info = parse_frame_header(&compressed[pos..pos + hdr_size]).unwrap();
+    pos += hdr_size;
+
+    let max_block = info.block_size.get_size();
+    let mut output = Vec::new();
+
+    loop {
+        let block =
+            parse_block_header(compressed[pos..pos + BLOCK_HEADER_SIZE].try_into().unwrap())
+                .unwrap();
+        pos += BLOCK_HEADER_SIZE;
+
+        match block {
+            BlockHeader::Compressed(len) => {
+                let len = len as usize;
+                let mut buf = vec![0u8; max_block];
+                let n =
+                    lz4rip::block::decompress_into(&compressed[pos..pos + len], &mut buf).unwrap();
+                output.extend_from_slice(&buf[..n]);
+                pos += len;
+            }
+            BlockHeader::Uncompressed(len) => {
+                let len = len as usize;
+                output.extend_from_slice(&compressed[pos..pos + len]);
+                pos += len;
+            }
+            BlockHeader::EndMark => break,
+        }
+    }
+
+    assert_eq!(output, input);
+}
+
+#[test]
+fn push_decode_linked_blocks() {
+    use lz4rip::frame::push::*;
+
+    let input = compression66json();
+    let frame_info = lz4rip::frame::FrameInfo::new().block_mode(lz4rip::frame::BlockMode::Linked);
+    let mut enc = lz4rip::frame::FrameEncoder::with_frame_info(frame_info, Vec::new());
+    enc.write_all(input).unwrap();
+    let compressed = enc.finish().unwrap();
+
+    let mut pos = 0;
+
+    let hdr_size = frame_header_size(&compressed[pos..]).unwrap();
+    let info = parse_frame_header(&compressed[pos..pos + hdr_size]).unwrap();
+    assert_eq!(info.block_mode, lz4rip::frame::BlockMode::Linked);
+    pos += hdr_size;
+
+    let max_block = info.block_size.get_size();
+    let mut output = Vec::new();
+
+    loop {
+        let block =
+            parse_block_header(compressed[pos..pos + BLOCK_HEADER_SIZE].try_into().unwrap())
+                .unwrap();
+        pos += BLOCK_HEADER_SIZE;
+
+        match block {
+            BlockHeader::Compressed(len) => {
+                let len = len as usize;
+                let mut buf = vec![0u8; max_block];
+                let dict_start = output.len().saturating_sub(lz4rip::block::WINDOW_SIZE);
+                let n = lz4rip::block::decompress_into_with_dict(
+                    &compressed[pos..pos + len],
+                    &mut buf,
+                    &output[dict_start..],
+                )
+                .unwrap();
+                output.extend_from_slice(&buf[..n]);
+                pos += len;
+            }
+            BlockHeader::Uncompressed(len) => {
+                let len = len as usize;
+                output.extend_from_slice(&compressed[pos..pos + len]);
+                pos += len;
+            }
+            BlockHeader::EndMark => break,
+        }
+    }
+
+    assert_eq!(output, input);
+}

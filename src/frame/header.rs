@@ -63,7 +63,8 @@ impl BlockSize {
         }
         BlockSize::Max64KB
     }
-    pub(crate) fn get_size(&self) -> usize {
+    /// Returns the maximum block size in bytes.
+    pub fn get_size(&self) -> usize {
         match self {
             BlockSize::Auto => unreachable!(),
             BlockSize::Max64KB => 64 * 1024,
