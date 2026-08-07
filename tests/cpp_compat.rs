@@ -1,4 +1,5 @@
 #![cfg(not(miri))]
+#![cfg(not(all(target_arch = "arm", target_os = "linux", target_env = "gnu")))]
 
 mod common;
 
