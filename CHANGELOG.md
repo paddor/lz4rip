@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-08-07
+
 ### Added
 
 - JSR/WASM frame compression and decompression APIs with dictionary and
