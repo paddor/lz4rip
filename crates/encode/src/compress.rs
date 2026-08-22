@@ -854,7 +854,7 @@ fn prepare_plain_table<const N: usize>(
         *stream_offset = input_len + MAX_DISTANCE + 1;
         return 0;
     }
-    let offset = *stream_offset;
+    let mut offset = *stream_offset;
     let next = offset
         .checked_add(input_len)
         .and_then(|v| v.checked_add(MAX_DISTANCE + 1));
@@ -863,6 +863,7 @@ fn prepare_plain_table<const N: usize>(
     } else {
         table.clear();
         *stream_offset = input_len + MAX_DISTANCE + 1;
+        offset = 0;
     }
     offset
 }

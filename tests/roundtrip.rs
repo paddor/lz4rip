@@ -239,7 +239,7 @@ fn compressor_ref_epoch_reuse() {
     let input = b"the quick brown fox jumps over the lazy dog, again and again!";
     let mut output = vec![0u8; get_maximum_output_size(input.len())];
 
-    for _ in 0..1000 {
+    for _ in 0..70_000 {
         let n = comp.compress_into(input, &mut output).unwrap();
         let decompressed = decompress(&output[..n], input.len()).unwrap();
         assert_eq!(&decompressed, input);
