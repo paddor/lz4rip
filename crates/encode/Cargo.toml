@@ -1,7 +1,7 @@
 [package]
 name = "lz4rip-encode"
 description = "LZ4 block compression for lz4rip."
-version = "0.10.5"
+version = "0.10.6"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT"
