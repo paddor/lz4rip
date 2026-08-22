@@ -32,7 +32,7 @@ paranoid = ["lz4rip-core/paranoid", "lz4rip-encode/paranoid", "lz4rip-decode/par
 
 [dependencies]
 lz4rip-core = { version = "0.5.5", path = "crates/core", default-features = false }
-lz4rip-encode = { version = "0.10.5", path = "crates/encode", default-features = false }
+lz4rip-encode = { version = "0.10.6", path = "crates/encode", default-features = false }
 lz4rip-decode = { version = "0.10.3", path = "crates/decode", default-features = false }
 twox-hash = { version = "2.0.0", default-features = false, features = ["xxhash32"], optional = true }
 
