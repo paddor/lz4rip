@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.11.5] - 2026-08-22
+
+### Changed
+
+- Bumped `lz4rip-encode` to 0.10.6 and raised the facade crate dependency
+  floor to that version.
+- Bumped the JSR/WASM package metadata to 0.2.11.
+
 ## [0.11.4] - 2026-08-22
 
 ### Changed
