@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [0.11.4] - 2026-08-22
+
+### Changed
+
+- Bumped the JSR/WASM package metadata to 0.2.10.
+
+### Fixed
+
+- `CompressorRef` and `Compressor` now clear stale table offsets when their
+  internal stream epoch overflows.
+
 ## [0.11.3] - 2026-08-07
 
 ### Added
