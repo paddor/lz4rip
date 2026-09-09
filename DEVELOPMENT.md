@@ -79,25 +79,41 @@ MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test
 creates annotated tags after merge, publishes to crates.io, and creates
 GitHub releases. Configuration lives in `release-plz.toml`.
 
+Publishing uses crates.io trusted publishing through GitHub Actions OIDC.
+Do not add a crates.io token secret.
+
 ### Steps
 
-1. **Review the release-plz PR.** Verify semver bumps.
+1. **Review the release-plz PR.** Verify semver bumps and dependency versions
+   for every affected crate.
 
-2. **Curate changelogs.** For each bumped crate, insert a new
-   `## [x.y.z]` section below `## [Unreleased]`. Never modify existing
-   versioned sections.
+2. **Curate changelogs.** Insert a new `## [x.y.z]` section immediately below
+   `## [Unreleased]` for each bumped crate and place its release notes there.
+   Never rename or modify an existing versioned section.
 
-3. **Bump the JSR package version.** Update `jsr/deno.json` and
-   `jsr/wasm/Cargo.toml`, then run `cd jsr && bash build.sh` and
-   `deno task test`. The `jsr-publish` workflow tests PRs, publishes on
-   push to `main`, and JSR rejects duplicate versions.
+3. **Bump the WASM package.** Update `jsr/deno.json` and
+   `jsr/wasm/Cargo.toml`.
 
-4. **Merge the release PR.** release-plz tags and publishes to
-   crates.io automatically.
+4. **Build and verify.** Run the JSR commands below and any additional release
+   audit warranted by the changes.
 
-Use Deno 2.8.3 or newer for the JSR `deno bundle` tests. They cover bundled
-block/frame roundtrips, synchronous bytes, and initialization races. Bundled
-default initialization runs without file or network permissions.
+5. **Merge the release PR after CI passes.** Monitor `release-plz` for crate
+   publication and `.github/workflows/jsr.yml` for JSR publication.
+   JSR rejects duplicate versions.
+
+6. **Confirm publication.** Verify every intended crate version on crates.io
+   and the new package version on each JavaScript registry. Run roundtrips
+   against the published packages, including a bundled JSR roundtrip.
+
+```bash
+cd jsr
+bash build.sh
+deno task test
+```
+
+Use Deno 2.8.3 or newer for the bundled tests. They cover standalone bundles,
+synchronous bytes, and initialization races. Bundled default initialization
+runs without file or network permissions.
 
 ## Kani
 
