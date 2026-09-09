@@ -89,11 +89,15 @@ GitHub releases. Configuration lives in `release-plz.toml`.
 
 3. **Bump the JSR package version.** Update `jsr/deno.json` and
    `jsr/wasm/Cargo.toml`, then run `cd jsr && bash build.sh` and
-   `deno test --allow-read`. The `jsr-publish` workflow tests PRs, publishes on
+   `deno task test`. The `jsr-publish` workflow tests PRs, publishes on
    push to `main`, and JSR rejects duplicate versions.
 
 4. **Merge the release PR.** release-plz tags and publishes to
    crates.io automatically.
+
+Use Deno 2.8.3 or newer for the JSR `deno bundle` tests. They cover bundled
+block/frame roundtrips, synchronous bytes, and initialization races. Bundled
+default initialization runs without file or network permissions.
 
 ## Kani
 

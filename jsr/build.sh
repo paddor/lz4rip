@@ -10,10 +10,10 @@ mkdir -p "$PKG"
 
 echo "==> Building WASM..."
 cd wasm
-wasm-pack build --target web --release --out-dir "../$TMP"
+wasm-pack build --target bundler --release --out-dir "../$TMP"
 cd ..
 
-cp "$TMP/lz4rip_wasm.js" "$PKG/"
+cp "$TMP/"*.js "$PKG/"
 cp "$TMP/lz4rip_wasm.d.ts" "$PKG/"
 cp "$TMP/lz4rip_wasm_bg.wasm.d.ts" "$PKG/"
 mv "$TMP/lz4rip_wasm_bg.wasm" "$PKG/"

@@ -66,17 +66,21 @@
  * ```
  */
 
-import {
-  compress as wasmCompress,
-  compressBound as wasmCompressBound,
-  compressFrame as wasmCompressFrame,
-  Compressor as _Compressor,
-  decompress as wasmDecompress,
-  decompressFrame as wasmDecompressFrame,
-  Decompressor as _Decompressor,
-  DictTrainer as _DictTrainer,
-  initSync,
-} from "./pkg/lz4rip_wasm.js";
+import * as wasmBindings from "./pkg/lz4rip_wasm_bg.js";
+import type * as Wasm from "./pkg/lz4rip_wasm.js";
+
+// Use generated types for the bindings, including dynamically added methods
+// such as Symbol.dispose. The type-only import does not initialize WASM.
+const {
+  compress: wasmCompress,
+  compressBound: wasmCompressBound,
+  compressFrame: wasmCompressFrame,
+  Compressor: _Compressor,
+  decompress: wasmDecompress,
+  decompressFrame: wasmDecompressFrame,
+  Decompressor: _Decompressor,
+  DictTrainer: _DictTrainer,
+} = wasmBindings as unknown as typeof Wasm;
 
 /**
  * Reusable compression context. Amortizes internal allocations across
@@ -91,9 +95,9 @@ import {
  * compressor.free();
  * ```
  */
-export const Compressor: typeof _Compressor = _Compressor;
+export const Compressor: typeof Wasm.Compressor = _Compressor;
 /** Type alias for {@linkcode Compressor} instances. */
-export type Compressor = _Compressor;
+export type Compressor = Wasm.Compressor;
 
 /**
  * Reusable decompression context. Amortizes internal allocations across
@@ -108,9 +112,9 @@ export type Compressor = _Compressor;
  * decompressor.free();
  * ```
  */
-export const Decompressor: typeof _Decompressor = _Decompressor;
+export const Decompressor: typeof Wasm.Decompressor = _Decompressor;
 /** Type alias for {@linkcode Decompressor} instances. */
-export type Decompressor = _Decompressor;
+export type Decompressor = Wasm.Decompressor;
 
 /**
  * COVER dictionary trainer. Feed representative samples, then call
@@ -124,9 +128,9 @@ export type Decompressor = _Decompressor;
  * const dictBytes = trainer.train();
  * ```
  */
-export const DictTrainer: typeof _DictTrainer = _DictTrainer;
+export const DictTrainer: typeof Wasm.DictTrainer = _DictTrainer;
 /** Type alias for {@linkcode DictTrainer} instances. */
-export type DictTrainer = _DictTrainer;
+export type DictTrainer = Wasm.DictTrainer;
 
 export interface DictionaryOptions {
   /** 32-bit dictionary identifier stored in LZ4 frame headers. */
@@ -248,29 +252,43 @@ function maxDecompressedSize(
 }
 
 let initialized = false;
+let initialization: Promise<void> | undefined;
 
-/**
- * Initialize the WASM module. Must be called before any other function.
- */
-export async function init(): Promise<void> {
+function finishInitialization(wasm: Record<string, unknown>): void {
+  // A synchronous caller may have initialized while the import was pending.
   if (initialized) return;
-
-  const wasmUrl = new URL("./pkg/lz4rip_wasm_bg.wasm", import.meta.url);
-  const response = await fetch(wasmUrl);
-  const bytes = await response.arrayBuffer();
-  initSync({ module: new WebAssembly.Module(bytes) });
+  wasmBindings.__wbg_set_wasm(wasm);
+  // wasm-bindgen emits this initializer when the module needs startup work.
+  if (typeof wasm.__wbindgen_start === "function") wasm.__wbindgen_start();
   initialized = true;
 }
 
 /**
- * Initialize synchronously with a pre-loaded WASM binary.
- * Use when you have already loaded the WASM bytes (e.g. via `Deno.readFileSync`
- * or `fs.readFileSync` in Node.js).
+ * Initialize the WASM module. Must be called before compression or decoding.
  */
+export function init(): Promise<void> {
+  if (initialized) return Promise.resolve();
+  if (initialization) return initialization;
+
+  initialization = (async () => {
+    // Literal imports let bundlers include WASM and its generated JS bindings.
+    const wasm = await import("./pkg/lz4rip_wasm_bg.wasm");
+    finishInitialization(wasm);
+  })().catch((error) => {
+    initialization = undefined;
+    throw error;
+  });
+  return initialization;
+}
+
+/** Initialize synchronously from preloaded WASM bytes. */
 export function initSyncFromBytes(bytes: BufferSource): void {
   if (initialized) return;
-  initSync({ module: new WebAssembly.Module(bytes) });
-  initialized = true;
+  const module = new WebAssembly.Module(bytes);
+  const instance = new WebAssembly.Instance(module, {
+    "./lz4rip_wasm_bg.js": wasmBindings,
+  });
+  finishInitialization(instance.exports);
 }
 
 /**
