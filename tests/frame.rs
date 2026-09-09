@@ -12,6 +12,34 @@ const LINKED_DICT_FRAME_BLOCK_BYTES: usize = 64 * 1024;
 const LINKED_DICT_REPEAT_START: usize = LINKED_DICT_FRAME_BLOCK_BYTES / 2;
 
 #[test]
+fn flush_reaches_wrapped_writer() {
+    let mut enc = lz4rip::frame::FrameEncoder::new(std::io::BufWriter::new(Vec::new()));
+    enc.write_all(b"hello").unwrap();
+    enc.flush().unwrap();
+    assert!(!enc.get_ref().get_ref().is_empty());
+    assert!(enc.get_ref().buffer().is_empty());
+}
+
+#[test]
+fn flush_propagates_wrapped_writer_error() {
+    struct FlushError;
+    impl Write for FlushError {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::ErrorKind::WouldBlock.into())
+        }
+    }
+    let mut enc = lz4rip::frame::FrameEncoder::new(FlushError);
+    enc.write_all(b"hello").unwrap();
+    assert_eq!(
+        enc.flush().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
+
+#[test]
 fn concatenated() {
     let mut enc = lz4rip::frame::FrameEncoder::new(Vec::new());
     enc.write_all(compression1k()).unwrap();

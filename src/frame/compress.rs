@@ -410,7 +410,7 @@ impl<W: io::Write> io::Write for FrameEncoder<W> {
         if self.src_start != self.src_end {
             self.write_block()?;
         }
-        Ok(())
+        self.w.flush()
     }
 }
 
