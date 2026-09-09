@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.11.6] - 2026-09-10
+
 ### Fixed
 
 - Fix JSR package initialization after `deno bundle` by importing WASM and
@@ -14,6 +16,10 @@
 - Keep `FrameEncoder` failed after write, flush, or finalization errors,
   including partial writes and `WouldBlock`. Discard the incomplete frame and
   create a new encoder after an error.
+
+### Changed
+
+- Bump the JSR/WASM package to `0.2.12`.
 
 ## [0.11.5] - 2026-08-22
 
