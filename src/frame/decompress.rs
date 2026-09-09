@@ -231,8 +231,9 @@ impl<R: io::Read> FrameDecoder<R> {
 
         let max_block_size = frame_info.block_size.get_size();
         if frame_info.block_mode == BlockMode::Linked {
-            debug_assert_eq!(self.dst.capacity(), max_block_size * 2 + WINDOW_SIZE);
-            if self.dst_start + max_block_size > self.dst.capacity() {
+            let dst_size = max_block_size * 2 + WINDOW_SIZE;
+            debug_assert!(self.dst.capacity() >= dst_size);
+            if self.dst_start + max_block_size > dst_size {
                 debug_assert!(self.dst_start >= max_block_size + WINDOW_SIZE);
                 self.ext_dict_offset = self.dst_start - WINDOW_SIZE;
                 self.ext_dict_len = WINDOW_SIZE;
@@ -248,7 +249,7 @@ impl<R: io::Read> FrameDecoder<R> {
             }
         } else {
             debug_assert_eq!(self.ext_dict_len, 0);
-            debug_assert_eq!(self.dst.capacity(), max_block_size);
+            debug_assert!(self.dst.capacity() >= max_block_size);
             self.dst_start = 0;
             self.dst_end = 0;
         }

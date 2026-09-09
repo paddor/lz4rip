@@ -40,6 +40,32 @@ fn flush_propagates_wrapped_writer_error() {
 }
 
 #[test]
+fn concatenated_frames_with_smaller_buffer_requirements() {
+    use lz4rip::frame::{BlockMode, FrameDecoder, FrameEncoder, FrameInfo};
+
+    for first_mode in [BlockMode::Independent, BlockMode::Linked] {
+        for second_mode in [BlockMode::Independent, BlockMode::Linked] {
+            let data = b"abcdefgh".repeat(40_000);
+            let mut compressed = Vec::new();
+            for (size, mode) in [
+                (BlockSize::Max256KB, first_mode),
+                (BlockSize::Max64KB, second_mode),
+            ] {
+                let info = FrameInfo::new().block_size(size).block_mode(mode);
+                let mut enc = FrameEncoder::with_frame_info(info, Vec::new());
+                enc.write_all(&data).unwrap();
+                compressed.extend_from_slice(&enc.finish().unwrap());
+            }
+            let mut output = Vec::new();
+            FrameDecoder::new(compressed.as_slice())
+                .read_to_end(&mut output)
+                .unwrap();
+            assert_eq!(output, data.repeat(2));
+        }
+    }
+}
+
+#[test]
 fn concatenated() {
     let mut enc = lz4rip::frame::FrameEncoder::new(Vec::new());
     enc.write_all(compression1k()).unwrap();
