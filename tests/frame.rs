@@ -12,6 +12,158 @@ const LINKED_DICT_FRAME_BLOCK_BYTES: usize = 64 * 1024;
 const LINKED_DICT_REPEAT_START: usize = LINKED_DICT_FRAME_BLOCK_BYTES / 2;
 
 #[test]
+fn flush_reaches_wrapped_writer() {
+    let mut enc = lz4rip::frame::FrameEncoder::new(std::io::BufWriter::new(Vec::new()));
+    enc.write_all(b"hello").unwrap();
+    enc.flush().unwrap();
+    assert!(!enc.get_ref().get_ref().is_empty());
+    assert!(enc.get_ref().buffer().is_empty());
+}
+
+#[test]
+fn flush_propagates_wrapped_writer_error() {
+    struct FlushError;
+    impl Write for FlushError {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::ErrorKind::WouldBlock.into())
+        }
+    }
+    let mut enc = lz4rip::frame::FrameEncoder::new(FlushError);
+    enc.write_all(b"hello").unwrap();
+    assert_eq!(
+        enc.flush().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
+
+#[test]
+fn concatenated_frames_with_smaller_buffer_requirements() {
+    use lz4rip::frame::{BlockMode, FrameDecoder, FrameEncoder, FrameInfo};
+
+    for first_mode in [BlockMode::Independent, BlockMode::Linked] {
+        for second_mode in [BlockMode::Independent, BlockMode::Linked] {
+            let data = b"abcdefgh".repeat(40_000);
+            let mut compressed = Vec::new();
+            for (size, mode) in [
+                (BlockSize::Max256KB, first_mode),
+                (BlockSize::Max64KB, second_mode),
+            ] {
+                let info = FrameInfo::new().block_size(size).block_mode(mode);
+                let mut enc = FrameEncoder::with_frame_info(info, Vec::new());
+                enc.write_all(&data).unwrap();
+                compressed.extend_from_slice(&enc.finish().unwrap());
+            }
+            let mut output = Vec::new();
+            FrameDecoder::new(compressed.as_slice())
+                .read_to_end(&mut output)
+                .unwrap();
+            assert_eq!(output, data.repeat(2));
+        }
+    }
+}
+
+#[test]
+fn empty_data_blocks_are_not_eof() {
+    for empty in [vec![0, 0, 0, 0x80], vec![1, 0, 0, 0, 0]] {
+        let mut enc = lz4rip::frame::FrameEncoder::new(Vec::new());
+        enc.write_all(b"hello").unwrap();
+        let mut frame = enc.finish().unwrap();
+        frame.splice(7..7, empty.iter().copied().cycle().take(empty.len() * 3));
+
+        let mut dec = lz4rip::frame::FrameDecoder::new(frame.as_slice());
+        let mut output = Vec::new();
+        dec.read_to_end(&mut output).unwrap();
+        assert_eq!(output, b"hello");
+
+        let mut dec = lz4rip::frame::FrameDecoder::new(frame.as_slice());
+        let mut output = [0; 16];
+        let len = dec.read(&mut output).unwrap();
+        assert_eq!(&output[..len], b"hello");
+
+        // Empty blocks must not hide a missing frame terminator.
+        frame.truncate(7 + empty.len() * 3);
+        let mut output = Vec::new();
+        assert_eq!(
+            lz4rip::frame::FrameDecoder::new(frame.as_slice())
+                .read_to_end(&mut output)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
+    }
+}
+
+#[test]
+fn encoder_errors_remain_errors_at_every_output_position() {
+    struct FailOnceAfter {
+        remaining: usize,
+        failed: bool,
+        bytes: Vec<u8>,
+    }
+    impl Write for FailOnceAfter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.remaining == 0 && !self.failed {
+                self.failed = true;
+                return Err(std::io::ErrorKind::WouldBlock.into());
+            }
+            let len = if self.failed {
+                buf.len()
+            } else {
+                buf.len().min(self.remaining).min(3)
+            };
+            self.bytes.extend_from_slice(&buf[..len]);
+            self.remaining = self.remaining.saturating_sub(len);
+            Ok(len)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let info = lz4rip::frame::FrameInfo::new()
+        .block_size(BlockSize::Max64KB)
+        .block_checksums(true)
+        .content_checksum(true);
+    let data = b"hello world ".repeat(20);
+    let mut control = lz4rip::frame::FrameEncoder::with_frame_info(info, Vec::new());
+    control.write_all(&data).unwrap();
+    let expected = control.finish().unwrap();
+    for offset in 0..=expected.len() {
+        let writer = FailOnceAfter {
+            remaining: offset,
+            failed: false,
+            bytes: Vec::new(),
+        };
+        let mut enc = lz4rip::frame::FrameEncoder::with_frame_info(info, writer);
+        if offset == expected.len() {
+            enc.write_all(&data).unwrap();
+            assert_eq!(enc.finish().unwrap().bytes, expected);
+            continue;
+        }
+        assert!(enc.write_all(&data).is_err() || enc.try_finish().is_err());
+        assert_eq!(enc.get_ref().bytes, expected[..offset]);
+        assert!(enc.write_all(b"retry").is_err(), "offset {offset}");
+        assert!(enc.flush().is_err(), "offset {offset}");
+        assert!(enc.try_finish().is_err(), "offset {offset}");
+        assert_eq!(enc.get_ref().bytes, expected[..offset]);
+        assert!(enc.finish().is_err(), "offset {offset}");
+    }
+
+    // Exercise a block write that happens during write_all, before finishing.
+    let writer = FailOnceAfter {
+        remaining: 7,
+        failed: false,
+        bytes: Vec::new(),
+    };
+    let mut enc = lz4rip::frame::FrameEncoder::with_frame_info(info, writer);
+    assert!(enc.write_all(&vec![b'a'; 65_537]).is_err());
+    assert!(enc.write_all(b"retry").is_err());
+    assert!(enc.finish().is_err());
+}
+
+#[test]
 fn concatenated() {
     let mut enc = lz4rip::frame::FrameEncoder::new(Vec::new());
     enc.write_all(compression1k()).unwrap();

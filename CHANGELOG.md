@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Decode concatenated frames with smaller block sizes or different block modes
+  without failing debug assertions about buffer capacity.
+- Continue reading past empty data blocks instead of returning premature EOF
+  before later content and frame completion checks.
+- Forward `FrameEncoder::flush` to the wrapped writer and propagate its errors.
+- Keep `FrameEncoder` failed after write, flush, or finalization errors,
+  including partial writes and `WouldBlock`. Discard the incomplete frame and
+  create a new encoder after an error.
+
 ## [0.11.5] - 2026-08-22
 
 ### Changed
