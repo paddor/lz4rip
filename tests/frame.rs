@@ -97,6 +97,73 @@ fn empty_data_blocks_are_not_eof() {
 }
 
 #[test]
+fn encoder_errors_remain_errors_at_every_output_position() {
+    struct FailOnceAfter {
+        remaining: usize,
+        failed: bool,
+        bytes: Vec<u8>,
+    }
+    impl Write for FailOnceAfter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.remaining == 0 && !self.failed {
+                self.failed = true;
+                return Err(std::io::ErrorKind::WouldBlock.into());
+            }
+            let len = if self.failed {
+                buf.len()
+            } else {
+                buf.len().min(self.remaining).min(3)
+            };
+            self.bytes.extend_from_slice(&buf[..len]);
+            self.remaining = self.remaining.saturating_sub(len);
+            Ok(len)
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let info = lz4rip::frame::FrameInfo::new()
+        .block_size(BlockSize::Max64KB)
+        .block_checksums(true)
+        .content_checksum(true);
+    let data = b"hello world ".repeat(20);
+    let mut control = lz4rip::frame::FrameEncoder::with_frame_info(info, Vec::new());
+    control.write_all(&data).unwrap();
+    let expected = control.finish().unwrap();
+    for offset in 0..=expected.len() {
+        let writer = FailOnceAfter {
+            remaining: offset,
+            failed: false,
+            bytes: Vec::new(),
+        };
+        let mut enc = lz4rip::frame::FrameEncoder::with_frame_info(info, writer);
+        if offset == expected.len() {
+            enc.write_all(&data).unwrap();
+            assert_eq!(enc.finish().unwrap().bytes, expected);
+            continue;
+        }
+        assert!(enc.write_all(&data).is_err() || enc.try_finish().is_err());
+        assert_eq!(enc.get_ref().bytes, expected[..offset]);
+        assert!(enc.write_all(b"retry").is_err(), "offset {offset}");
+        assert!(enc.flush().is_err(), "offset {offset}");
+        assert!(enc.try_finish().is_err(), "offset {offset}");
+        assert_eq!(enc.get_ref().bytes, expected[..offset]);
+        assert!(enc.finish().is_err(), "offset {offset}");
+    }
+
+    // Exercise a block write that happens during write_all, before finishing.
+    let writer = FailOnceAfter {
+        remaining: 7,
+        failed: false,
+        bytes: Vec::new(),
+    };
+    let mut enc = lz4rip::frame::FrameEncoder::with_frame_info(info, writer);
+    assert!(enc.write_all(&vec![b'a'; 65_537]).is_err());
+    assert!(enc.write_all(b"retry").is_err());
+    assert!(enc.finish().is_err());
+}
+
+#[test]
 fn concatenated() {
     let mut enc = lz4rip::frame::FrameEncoder::new(Vec::new());
     enc.write_all(compression1k()).unwrap();

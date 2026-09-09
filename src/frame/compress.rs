@@ -41,6 +41,10 @@ fn vec_sink_for_compression(
 /// To ensure a well formed stream the encoder must be finalized by calling
 /// either the [`finish()`], [`try_finish()`], or [`auto_finish()`] methods.
 ///
+/// After a write, flush, or finalization error, the encoder cannot be reused.
+/// Later operations return errors. Use [`into_inner`](Self::into_inner) to
+/// recover the writer and discard the incomplete frame.
+///
 /// [`finish()`]: Self::finish
 /// [`try_finish()`]: Self::try_finish
 /// [`auto_finish()`]: Self::auto_finish
@@ -83,6 +87,7 @@ pub struct FrameEncoder<W: io::Write> {
     content_len: u64,
     dst: Vec<u8>,
     is_frame_open: bool,
+    failed: bool,
     data_to_frame_written: bool,
     frame_info: FrameInfo,
     dict: Vec<u8>,
@@ -119,6 +124,7 @@ impl<W: io::Write> FrameEncoder<W> {
             content_len: 0,
             dst: Vec::new(),
             is_frame_open: false,
+            failed: false,
             data_to_frame_written: false,
             frame_info,
             src_start: 0,
@@ -167,20 +173,18 @@ impl<W: io::Write> FrameEncoder<W> {
     /// Attempt to finish this output stream, flushing internal buffer and writing stream
     /// terminator.
     pub fn try_finish(&mut self) -> Result<(), Error> {
-        match self.flush() {
-            Ok(()) => {
-                if !self.is_frame_open && self.data_to_frame_written {
-                    return Ok(());
-                }
-                if !self.is_frame_open && !self.data_to_frame_written {
-                    self.begin_frame(0)?;
-                }
-                self.end_frame()?;
-                self.data_to_frame_written = true;
-                Ok(())
-            }
-            Err(err) => Err(err.into()),
+        self.flush()?;
+        if !self.is_frame_open && self.data_to_frame_written {
+            return Ok(());
         }
+        self.failed = true;
+        if !self.is_frame_open {
+            self.begin_frame(0)?;
+        }
+        self.end_frame()?;
+        self.data_to_frame_written = true;
+        self.failed = false;
+        Ok(())
     }
 
     /// Returns the underlying writer _without_ flushing the stream.
@@ -200,7 +204,6 @@ impl<W: io::Write> FrameEncoder<W> {
 
     fn end_frame(&mut self) -> Result<(), Error> {
         debug_assert!(self.is_frame_open);
-        self.is_frame_open = false;
         if let Some(expected) = self.frame_info.content_size {
             if expected != self.content_len {
                 return Err(Error::ContentLengthError {
@@ -218,6 +221,7 @@ impl<W: io::Write> FrameEncoder<W> {
             self.w.write_all(&content_checksum.to_le_bytes())?;
         }
 
+        self.is_frame_open = false;
         Ok(())
     }
 
@@ -232,7 +236,6 @@ impl<W: io::Write> FrameEncoder<W> {
     }
 
     fn begin_frame(&mut self, buf_len: usize) -> io::Result<()> {
-        self.is_frame_open = true;
         if self.frame_info.block_size == BlockSize::Auto {
             self.frame_info.block_size = BlockSize::from_buf_length(buf_len);
         }
@@ -251,6 +254,7 @@ impl<W: io::Write> FrameEncoder<W> {
             self.content_hasher = XxHash32::with_seed(0);
             self.compression_table.clear();
         }
+        self.is_frame_open = true;
         Ok(())
     }
 
@@ -385,6 +389,11 @@ impl<W: io::Write> FrameEncoder<W> {
 
 impl<W: io::Write> io::Write for FrameEncoder<W> {
     fn write(&mut self, mut buf: &[u8]) -> io::Result<usize> {
+        if self.failed {
+            return Err(io::Error::other("encoder cannot be reused after an error"));
+        }
+        // Any early return leaves the encoder failed, including partial writes.
+        self.failed = true;
         if !self.is_frame_open && !buf.is_empty() {
             self.begin_frame(buf.len())?;
         }
@@ -403,14 +412,21 @@ impl<W: io::Write> io::Write for FrameEncoder<W> {
             buf = &buf[fill_len..];
             self.src_end += fill_len;
         }
+        self.failed = false;
         Ok(buf_len)
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        if self.failed {
+            return Err(io::Error::other("encoder cannot be reused after an error"));
+        }
+        self.failed = true;
         if self.src_start != self.src_end {
             self.write_block()?;
         }
-        self.w.flush()
+        self.w.flush()?;
+        self.failed = false;
+        Ok(())
     }
 }
 
