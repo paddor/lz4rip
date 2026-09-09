@@ -375,7 +375,7 @@ impl<R: io::Read> FrameDecoder<R> {
                 return Ok(0);
             }
             let read = self.read_block()?;
-            if read != 0 || self.current_frame_info.is_some() {
+            if read != 0 {
                 return Ok(read);
             }
         }

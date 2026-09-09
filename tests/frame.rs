@@ -66,6 +66,37 @@ fn concatenated_frames_with_smaller_buffer_requirements() {
 }
 
 #[test]
+fn empty_data_blocks_are_not_eof() {
+    for empty in [vec![0, 0, 0, 0x80], vec![1, 0, 0, 0, 0]] {
+        let mut enc = lz4rip::frame::FrameEncoder::new(Vec::new());
+        enc.write_all(b"hello").unwrap();
+        let mut frame = enc.finish().unwrap();
+        frame.splice(7..7, empty.iter().copied().cycle().take(empty.len() * 3));
+
+        let mut dec = lz4rip::frame::FrameDecoder::new(frame.as_slice());
+        let mut output = Vec::new();
+        dec.read_to_end(&mut output).unwrap();
+        assert_eq!(output, b"hello");
+
+        let mut dec = lz4rip::frame::FrameDecoder::new(frame.as_slice());
+        let mut output = [0; 16];
+        let len = dec.read(&mut output).unwrap();
+        assert_eq!(&output[..len], b"hello");
+
+        // Empty blocks must not hide a missing frame terminator.
+        frame.truncate(7 + empty.len() * 3);
+        let mut output = Vec::new();
+        assert_eq!(
+            lz4rip::frame::FrameDecoder::new(frame.as_slice())
+                .read_to_end(&mut output)
+                .unwrap_err()
+                .kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
+    }
+}
+
+#[test]
 fn concatenated() {
     let mut enc = lz4rip::frame::FrameEncoder::new(Vec::new());
     enc.write_all(compression1k()).unwrap();
