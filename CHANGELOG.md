@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Fix JSR package initialization after `deno bundle` by importing WASM and
+  its generated bindings through the module graph.
 - Decode concatenated frames with smaller block sizes or different block modes
   without failing debug assertions about buffer capacity.
 - Continue reading past empty data blocks instead of returning premature EOF
