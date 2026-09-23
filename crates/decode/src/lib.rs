@@ -30,6 +30,7 @@ macro_rules! paranoid_unsafe_call {
 
 mod decompress;
 pub(crate) mod primitives;
+mod validate;
 
 #[cfg(feature = "alloc")]
 pub use decompress::Decompressor;
@@ -37,6 +38,7 @@ pub use decompress::Decompressor;
 pub use decompress::decompress;
 pub use decompress::{DecompressorRef, decompress_into, decompress_into_with_dict};
 pub use lz4rip_core::DecompressError;
+pub use validate::{BlockValidation, validate_block, validate_block_with_dict};
 
 // Internal items needed by the lz4rip facade crate for the frame module.
 #[doc(hidden)]

@@ -23,7 +23,7 @@ pub fn read_integer(input: &[u8], input_pos: &mut usize) -> Result<usize, Decomp
 /// continuation bytes: the caller passes the output capacity so the loop
 /// stops as soon as the value is known to be rejected.
 #[inline]
-fn read_integer_bounded(
+pub(crate) fn read_integer_bounded(
     input: &[u8],
     input_pos: &mut usize,
     max: usize,
@@ -47,7 +47,58 @@ fn read_integer_bounded(
     Ok(n)
 }
 
-const LITERAL_LEN_MASK: u8 = 0b1111_0000;
+pub(crate) const LITERAL_LEN_MASK: u8 = 0b1111_0000;
+
+/// Parse the literal length encoded by `token`.
+#[inline]
+pub(crate) fn read_literal_length(
+    input: &[u8],
+    input_pos: &mut usize,
+    token: u8,
+    max_extension: usize,
+) -> Result<usize, DecompressError> {
+    let literal_length = (token >> 4) as usize;
+    if literal_length == 15 {
+        literal_length
+            .checked_add(read_integer_bounded(input, input_pos, max_extension)?)
+            .ok_or(DecompressError::LiteralOutOfBounds)
+    } else {
+        Ok(literal_length)
+    }
+}
+
+/// Parse the match length encoded by `token`.
+#[inline]
+pub(crate) fn read_match_length(
+    input: &[u8],
+    input_pos: &mut usize,
+    token: u8,
+    max_extension: usize,
+) -> Result<usize, DecompressError> {
+    let match_length = MINMATCH + (token & 0xF) as usize;
+    if match_length == MINMATCH + 15 {
+        match_length
+            .checked_add(read_integer_bounded(input, input_pos, max_extension)?)
+            .ok_or(DecompressError::LiteralOutOfBounds)
+    } else {
+        Ok(match_length)
+    }
+}
+
+/// Parse a nonzero match offset.
+#[inline]
+pub(crate) fn read_offset(input: &[u8], input_pos: &mut usize) -> Result<usize, DecompressError> {
+    let offset_bytes = input
+        .get(*input_pos..)
+        .and_then(|remaining| remaining.get(..2))
+        .ok_or(DecompressError::ExpectedAnotherByte)?;
+    *input_pos += 2;
+    let offset = u16::from_le_bytes(offset_bytes.try_into().unwrap()) as usize;
+    if offset == 0 {
+        return Err(DecompressError::OffsetZero);
+    }
+    Ok(offset)
+}
 
 #[cfg(target_pointer_width = "32")]
 #[inline]
@@ -224,9 +275,7 @@ pub(crate) fn decompress_internal<const USE_DICT: bool, S: Sink>(
                 continue;
             }
 
-            let match_length = (MINMATCH + 15)
-                .checked_add(read_integer_bounded(input, &mut input_pos, out.len())?)
-                .ok_or(DecompressError::LiteralOutOfBounds)?;
+            let match_length = read_match_length(input, &mut input_pos, token, out.len())?;
             if len_exceeds_capacity(*pos, match_length, out.len()) {
                 return Err(DecompressError::OutputTooSmall {
                     expected: expected_output_size(*pos, match_length),
@@ -297,18 +346,8 @@ pub(crate) fn decompress_internal<const USE_DICT: bool, S: Sink>(
             continue;
         }
 
-        let mut literal_length = (token >> 4) as usize;
+        let literal_length = read_literal_length(input, &mut input_pos, token, output.capacity())?;
         if literal_length != 0 {
-            if literal_length == 15 {
-                literal_length = literal_length
-                    .checked_add(read_integer_bounded(
-                        input,
-                        &mut input_pos,
-                        output.capacity(),
-                    )?)
-                    .ok_or(DecompressError::LiteralOutOfBounds)?;
-            }
-
             if len_exceeds_capacity(input_pos, literal_length, input.len()) {
                 return Err(DecompressError::LiteralOutOfBounds);
             }
@@ -344,28 +383,9 @@ pub(crate) fn decompress_internal<const USE_DICT: bool, S: Sink>(
         if input_pos >= input.len() {
             break;
         }
-        let offset = {
-            let dst = input
-                .get(input_pos..input_pos + 2)
-                .ok_or(DecompressError::ExpectedAnotherByte)?;
-            input_pos += 2;
-            let o = u16::from_le_bytes(dst.try_into().unwrap());
-            if o == 0 {
-                return Err(DecompressError::OffsetZero);
-            }
-            o as usize
-        };
+        let offset = read_offset(input, &mut input_pos)?;
 
-        let mut match_length = MINMATCH + (token & 0xF) as usize;
-        if match_length == MINMATCH + 15 {
-            match_length = match_length
-                .checked_add(read_integer_bounded(
-                    input,
-                    &mut input_pos,
-                    output.capacity(),
-                )?)
-                .ok_or(DecompressError::LiteralOutOfBounds)?;
-        }
+        let mut match_length = read_match_length(input, &mut input_pos, token, output.capacity())?;
 
         if len_exceeds_capacity(output.pos(), match_length, output.capacity()) {
             return Err(DecompressError::OutputTooSmall {

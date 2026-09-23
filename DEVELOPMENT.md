@@ -129,9 +129,10 @@ runs without file or network permissions.
 Proves decompressor bounds safety via bounded model checking. Requires
 [Kani](https://model-checking.github.io/kani/) (`cargo install --locked kani-verifier && cargo kani setup`).
 
-Six proof harnesses in `crates/decode/src/decompress.rs`: three exhaustive
-end-to-end proofs (4-byte, 6-byte, dict 6-byte inputs) and three fast-path
-margin/primitive proofs.
+Nine proof harnesses in `crates/decode/src/decompress.rs` and
+`crates/decode/src/validate.rs`: three exhaustive decompression proofs, three
+fast-path margin/primitive proofs, two validator proofs, and one checked
+decoded-position proof.
 
 ```sh
 # all harnesses, single-threaded (~25 min)
@@ -153,6 +154,8 @@ cargo +nightly fuzz run fuzz_decomp_corrupt_block
 cargo +nightly fuzz run fuzz_decomp_corrupt_frame
 cargo +nightly fuzz run fuzz_decomp_no_output_leak
 cargo +nightly fuzz run fuzz_roundtrip_cpp_compress
+cargo +nightly fuzz run fuzz_validate_block
+cargo +nightly fuzz run fuzz_validate_block_dict
 ```
 
 ## Feature flags

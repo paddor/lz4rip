@@ -89,3 +89,8 @@ path = "benches/profile_compress.rs"
 harness = false
 name = "profile_compress_c"
 path = "benches/profile_compress_c.rs"
+
+[[bench]]
+harness = false
+name = "profile_validate"
+path = "benches/profile_validate.rs"

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add no-alloc raw block validation with exact decoded-size and dictionary
+  checks, without reconstructing or retaining decoded bytes.
+
 ### Changed
 
 - `Compressor` and `CompressorRef` reuse their hash table across calls only
