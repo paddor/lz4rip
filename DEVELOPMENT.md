@@ -38,7 +38,8 @@ cargo run --manifest-path bench/Cargo.toml --bin lz4rip_charts -- all doc/charts
 
 `--small` benchmarks leading slices (512 B to 1 MiB) of four Silesia files
 with reused compressor state and writes `small_encode.svg` and
-`small_decode.svg`. Every implementation decodes C lz4's blocks.
+`small_decode.svg`. Every implementation decodes C lz4's blocks (thick
+lines) and its own output (thin lines).
 
 Rerun only lz4rip (other impls served from cache), then regenerate charts:
 ```sh

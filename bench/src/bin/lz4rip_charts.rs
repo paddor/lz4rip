@@ -1061,6 +1061,8 @@ fn draw_small(cfg: &Config, out_dir: &Path, decode: bool) -> Result<(), Box<dyn 
             .find(|r| r.codec == codec && r.input == name)
             .and_then(mbs)
     };
+    // Decode of each codec's own output, drawn thin next to its C lz4 line.
+    let own_codec = |codec: &str| (decode && codec != "C lz4").then(|| format!("{codec} (own)"));
 
     let width = 830;
     let panel_w = 700.0;
@@ -1070,7 +1072,7 @@ fn draw_small(cfg: &Config, out_dir: &Path, decode: bool) -> Result<(), Box<dyn 
     let gap = 50.0;
     let n = SMALL_PREFIXES.len() as f64;
     let total_h = n * panel_h + (n - 1.0) * gap;
-    let height = (top + total_h + 110.0) as u32;
+    let height = (top + total_h + if decode { 134.0 } else { 110.0 }) as u32;
     let path = output_path(out_dir, file);
     let area = root(&path, width, height)?;
     chart_header(
@@ -1093,7 +1095,9 @@ fn draw_small(cfg: &Config, out_dir: &Path, decode: bool) -> Result<(), Box<dyn 
         let x_right = left + panel_w;
         let values = codecs
             .iter()
-            .flat_map(|c| sizes.iter().filter_map(|&s| value(c, prefix, s)))
+            .flat_map(|c| [Some(c.to_string()), own_codec(c)])
+            .flatten()
+            .flat_map(|c| sizes.iter().filter_map(move |&s| value(&c, prefix, s)))
             .collect::<Vec<_>>();
         if values.is_empty() {
             continue;
@@ -1159,6 +1163,13 @@ fn draw_small(cfg: &Config, out_dir: &Path, decode: bool) -> Result<(), Box<dyn 
             for (x, y) in pts {
                 dot(&area, x, y, 3, style.color)?;
             }
+            if let Some(own) = own_codec(codec) {
+                let pts = sizes
+                    .iter()
+                    .filter_map(|&s| value(&own, prefix, s).map(|v| (map_x(s), map_y(v))))
+                    .collect::<Vec<_>>();
+                polyline(&area, &pts, style.color, 1, 0.6, false)?;
+            }
         }
     }
     vtext(
@@ -1170,6 +1181,18 @@ fn draw_small(cfg: &Config, out_dir: &Path, decode: bool) -> Result<(), Box<dyn 
         TEXT,
     )?;
     draw_legend(&area, cfg, &codecs, left + 40.0, top + total_h + 50.0, 2)?;
+    if decode {
+        text(
+            &area,
+            "thick = decoding C lz4's blocks, thin = decoding its own output",
+            px(width as f64 / 2.0),
+            px(height as f64 - 14.0),
+            10,
+            MUTED,
+            HPos::Center,
+            false,
+        )?;
+    }
     area.present()?;
     drop(area);
     finish_svg(&path, width, height)?;

@@ -910,7 +910,8 @@ fn time_decode(
 
 /// Leading slices of four Silesia files, compressed with reused state as a
 /// hot loop over messages of that size would. Every codec decodes C lz4's
-/// output, so decode times compare the same blocks.
+/// output, so decode times compare the same blocks. `<codec> (own)` rows hold
+/// the decode time of the codec's own output.
 fn run_small(only: &[String], inputs: &[(String, Vec<u8>)]) {
     let target_ns = 20_000_000u64;
     let codecs = [LZ4RIP_CODEC, "C lz4", "lz4_flex unsafe", "lz4_flex"];
@@ -942,6 +943,13 @@ fn run_small(only: &[String], inputs: &[(String, Vec<u8>)]) {
                     _ => bench_lz4rip_compressor(data, &name, codec, target_ns),
                 };
                 let decompress_ns = bench_decode_c_block(codec, &c_block, data, target_ns);
+                // Also keep the decode time of the codec's own output.
+                if codec != "C lz4" {
+                    all_results.push(BenchResult {
+                        codec: format!("{codec} (own)"),
+                        ..r.clone()
+                    });
+                }
                 all_results.push(BenchResult { decompress_ns, ..r });
             }
         }
