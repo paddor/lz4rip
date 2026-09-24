@@ -1079,9 +1079,10 @@ fn draw_small(cfg: &Config, out_dir: &Path, decode: bool) -> Result<(), Box<dyn 
         &area,
         width,
         &if decode {
-            "Decode Throughput vs Input Size (Silesia slices, C lz4 blocks)".to_string()
+            "Decode Throughput vs Input Size (64 distinct Silesia slices, C lz4 blocks)".to_string()
         } else {
-            "Encode Throughput vs Input Size (Silesia slices, no dictionary)".to_string()
+            "Encode Throughput vs Input Size (64 distinct Silesia slices, no dictionary)"
+                .to_string()
         },
         cfg.hw_label.as_deref(),
         18,

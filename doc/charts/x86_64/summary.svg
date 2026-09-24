@@ -4,7 +4,7 @@
 12-file Silesia: LZ4 Pipeline @1 GB/s aggregate (lower is better)
 </text>
 <text x="425" y="40" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#7D8590">
-Intel Core i7-8700B @ 3.20GHz, 6 cores, performance governor, turbo off
+Intel Core i7-8700B @ 3.20GHz, 12 cores, performance governor, turbo off
 </text>
 <text x="22" y="190" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="9.67741935483871" opacity="1" fill="#E6EDF3" font-weight="bold" transform="rotate(270, 22, 190)">
 seconds / GB
@@ -26,15 +26,15 @@ seconds / GB
 4
 </text>
 <polyline fill="none" opacity="1" stroke="#30363D" stroke-width="2" points="70,318 830,318 "/>
-<rect x="108" y="193" width="50" height="125" opacity="1" fill="#60A5FA" stroke="none"/>
-<rect x="108" y="167" width="50" height="26" opacity="1" fill="#4680C4" stroke="none"/>
-<rect x="108" y="144" width="50" height="23" opacity="1" fill="#60A5FA" stroke="none"/>
-<rect x="160" y="201" width="50" height="117" opacity="1" fill="#F87171" stroke="none"/>
-<rect x="160" y="173" width="50" height="28" opacity="1" fill="#C45050" stroke="none"/>
-<rect x="160" y="148" width="50" height="25" opacity="1" fill="#F87171" stroke="none"/>
-<rect x="211" y="175" width="50" height="143" opacity="1" fill="#F472B6" stroke="none"/>
-<rect x="211" y="148" width="50" height="27" opacity="1" fill="#C05A92" stroke="none"/>
-<rect x="211" y="116" width="50" height="32" opacity="1" fill="#F472B6" stroke="none"/>
+<rect x="108" y="192" width="50" height="126" opacity="1" fill="#60A5FA" stroke="none"/>
+<rect x="108" y="167" width="50" height="25" opacity="1" fill="#4680C4" stroke="none"/>
+<rect x="108" y="143" width="50" height="24" opacity="1" fill="#60A5FA" stroke="none"/>
+<rect x="160" y="192" width="50" height="126" opacity="1" fill="#F87171" stroke="none"/>
+<rect x="160" y="164" width="50" height="28" opacity="1" fill="#C45050" stroke="none"/>
+<rect x="160" y="141" width="50" height="23" opacity="1" fill="#F87171" stroke="none"/>
+<rect x="211" y="169" width="50" height="149" opacity="1" fill="#F472B6" stroke="none"/>
+<rect x="211" y="141" width="50" height="28" opacity="1" fill="#C05A92" stroke="none"/>
+<rect x="211" y="109" width="50" height="32" opacity="1" fill="#F472B6" stroke="none"/>
 <rect x="263" y="184" width="50" height="134" opacity="1" fill="#F59E0B" stroke="none"/>
 <rect x="263" y="158" width="50" height="26" opacity="1" fill="#C47D08" stroke="none"/>
 <rect x="263" y="132" width="50" height="26" opacity="1" fill="#F59E0B" stroke="none"/>
@@ -47,12 +47,12 @@ Compressible
 <rect x="488" y="219" width="50" height="99" opacity="1" fill="#60A5FA" stroke="none"/>
 <rect x="488" y="172" width="50" height="47" opacity="1" fill="#4680C4" stroke="none"/>
 <rect x="488" y="155" width="50" height="17" opacity="1" fill="#60A5FA" stroke="none"/>
-<rect x="540" y="275" width="50" height="43" opacity="1" fill="#F87171" stroke="none"/>
-<rect x="540" y="225" width="50" height="50" opacity="1" fill="#C45050" stroke="none"/>
-<rect x="540" y="213" width="50" height="12" opacity="1" fill="#F87171" stroke="none"/>
-<rect x="591" y="260" width="50" height="58" opacity="1" fill="#F472B6" stroke="none"/>
-<rect x="591" y="210" width="50" height="50" opacity="1" fill="#C05A92" stroke="none"/>
-<rect x="591" y="196" width="50" height="14" opacity="1" fill="#F472B6" stroke="none"/>
+<rect x="540" y="268" width="50" height="50" opacity="1" fill="#F87171" stroke="none"/>
+<rect x="540" y="219" width="50" height="49" opacity="1" fill="#C45050" stroke="none"/>
+<rect x="540" y="208" width="50" height="11" opacity="1" fill="#F87171" stroke="none"/>
+<rect x="591" y="255" width="50" height="63" opacity="1" fill="#F472B6" stroke="none"/>
+<rect x="591" y="206" width="50" height="49" opacity="1" fill="#C05A92" stroke="none"/>
+<rect x="591" y="191" width="50" height="15" opacity="1" fill="#F472B6" stroke="none"/>
 <rect x="643" y="221" width="50" height="97" opacity="1" fill="#F59E0B" stroke="none"/>
 <rect x="643" y="173" width="50" height="48" opacity="1" fill="#C47D08" stroke="none"/>
 <rect x="643" y="155" width="50" height="18" opacity="1" fill="#F59E0B" stroke="none"/>

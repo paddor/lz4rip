@@ -36,10 +36,12 @@ taskset -c 0 cargo run --release --example lz4rip_bench --features paranoid -- -
 cargo run --manifest-path bench/Cargo.toml --bin lz4rip_charts -- all doc/charts/x86_64
 ```
 
-`--small` benchmarks leading slices (512 B to 1 MiB) of four Silesia files
-with reused compressor state and writes `small_encode.svg` and
-`small_decode.svg`. Every implementation decodes C lz4's blocks (thick
-lines) and its own output (thin lines).
+`--small` benchmarks slices (512 B to 1 MiB) of four Silesia files with
+reused compressor state and writes `small_encode.svg` and `small_decode.svg`.
+Each timed pass walks up to 64 distinct slices of one size, so no codec sees
+the same input twice in a row. Repeating one input lets the branch predictor
+learn it and distorts results. Every implementation decodes C lz4's blocks
+(thick lines) and its own output (thin lines).
 
 Rerun only lz4rip (other impls served from cache), then regenerate charts:
 ```sh
