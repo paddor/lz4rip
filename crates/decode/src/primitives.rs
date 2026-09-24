@@ -344,7 +344,7 @@ pub(crate) fn wild_copy_match_16(buf: &mut [u8], src: usize, dst_pos: &mut usize
     match_copy(buf, src, dst_pos, len);
 }
 
-/// Inline match wildcopy for `offset >= 32`.
+/// Inline match wildcopy for `offset >= 16`, 32 bytes per step.
 #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 #[inline]
 pub(crate) unsafe fn wild_copy_match_32(
@@ -353,16 +353,18 @@ pub(crate) unsafe fn wild_copy_match_32(
     dst_pos: &mut usize,
     len: usize,
 ) {
-    debug_assert!(*dst_pos >= src + 32);
+    debug_assert!(*dst_pos >= src + 16);
     debug_assert!(*dst_pos + len + 32 <= buf.len());
     let dst = *dst_pos;
     unsafe {
         let ptr = buf.as_mut_ptr();
         let mut done = 0;
         loop {
+            // Each 16-byte chunk is stored before the next is loaded, so the
+            // copy repeats the source pattern for any offset >= 16.
             let v0 = (ptr.add(src + done) as *const u128).read_unaligned();
-            let v1 = (ptr.add(src + done + 16) as *const u128).read_unaligned();
             (ptr.add(dst + done) as *mut u128).write_unaligned(v0);
+            let v1 = (ptr.add(src + done + 16) as *const u128).read_unaligned();
             (ptr.add(dst + done + 16) as *mut u128).write_unaligned(v1);
             done += 32;
             if done >= len {
@@ -373,11 +375,11 @@ pub(crate) unsafe fn wild_copy_match_32(
     *dst_pos += len;
 }
 
-/// Match wildcopy for `offset >= 32` (paranoid: 32-byte `copy_within` chunks).
+/// Match wildcopy for `offset >= 16` (paranoid: 32-byte `copy_within` chunks).
 #[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 #[inline]
 pub(crate) fn wild_copy_match_32(buf: &mut [u8], src: usize, dst_pos: &mut usize, len: usize) {
-    debug_assert!(*dst_pos >= src + 32);
+    debug_assert!(*dst_pos >= src + 16);
     match_copy(buf, src, dst_pos, len);
 }
 

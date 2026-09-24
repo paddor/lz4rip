@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `Compressor` and `CompressorRef` reuse their hash table across calls only
+  for inputs up to 1 KB (was 8 KB). Larger inputs clear it. On a stream of
+  different messages this encodes 2-8 KB text 50-70% faster and XML and
+  database records 10-25% faster. Incompressible input of that size encodes
+  up to 26% slower.
+- Inputs from 1 KB to 16 KB grow the skip step more slowly after misses.
+  Short text compresses better: 2 KB slices of dickens at 1.17 instead of
+  1.10.
+- Faster decoding of long matches with offsets from 16 to 31: they take the
+  wide copy path. 3-15% faster on Silesia slices from 512 B to 64 KB.
+
 ## [0.11.6] - 2026-09-10
 
 ### Fixed

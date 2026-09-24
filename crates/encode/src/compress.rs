@@ -24,11 +24,29 @@ pub use crate::hashtable::{DEFAULT_DICT_ENTRIES, DEFAULT_NODICT_ENTRIES, MIN_ENT
 
 /// Inputs up to this size reuse the no-dict hash table across calls (epoch-based
 /// table reuse); larger inputs clear it. Independent of table entry count.
-const EPOCH_THRESHOLD: usize = 8 * 1024;
+///
+/// Reuse saves the table clear, which dominates tiny inputs. From 2 KB up a
+/// cleared table is faster on compressible data: a table full of stale
+/// entries costs more than the clear (see DESIGN.md).
+const EPOCH_THRESHOLD: usize = 1024;
 
 /// Skip acceleration: step grows by 1 every `1 << N` consecutive non-matches.
 /// C lz4 uses 6; see DESIGN.md for tradeoff analysis.
 const INCREASE_STEPSIZE_BITSHIFT: usize = 3;
+
+/// Skip acceleration for inputs from 1 KB to 16 KB. Text this short has few
+/// early matches, and the faster step-up skipped most of it.
+const SMALL_INPUT_STEPSIZE_BITSHIFT: usize = 4;
+
+/// Skip acceleration shift for an input of `input_len` bytes.
+#[inline]
+fn skip_shift(input_len: usize) -> usize {
+    if (1024..=16 * 1024).contains(&input_len) {
+        SMALL_INPUT_STEPSIZE_BITSHIFT
+    } else {
+        INCREASE_STEPSIZE_BITSHIFT
+    }
+}
 
 /// Inputs up to this size use the dict table read-only (no per-call clearing or
 /// table writes). Self-references within small inputs are rare; the dict provides
@@ -185,15 +203,16 @@ pub(crate) fn compress_internal<
     }
 
     let mut forward_hash = paranoid_unsafe_call!(T::get_hash_at_inbounds(input, cur));
+    let shift = skip_shift(input.len());
 
     loop {
         let mut candidate;
         let mut candidate_source;
         let mut offset;
-        let mut non_match_count = 1 << INCREASE_STEPSIZE_BITSHIFT;
+        let mut non_match_count = 1 << shift;
 
         loop {
-            let step = non_match_count >> INCREASE_STEPSIZE_BITSHIFT;
+            let step = non_match_count >> shift;
             non_match_count += 1;
             let next_cur = cur + step;
 

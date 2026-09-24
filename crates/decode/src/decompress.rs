@@ -251,7 +251,7 @@ pub(crate) fn decompress_internal<const USE_DICT: bool, S: Sink>(
             if did_overflow {
                 return Err(DecompressError::OffsetOutOfBounds);
             }
-            if offset >= 32 && has_headroom(*pos, match_length, 32, out.len()) {
+            if offset >= 16 && has_headroom(*pos, match_length, 32, out.len()) {
                 paranoid_unsafe_call!(crate::primitives::wild_copy_match_32(
                     out,
                     start,
@@ -386,7 +386,7 @@ pub(crate) fn decompress_internal<const USE_DICT: bool, S: Sink>(
         if did_overflow {
             return Err(DecompressError::OffsetOutOfBounds);
         }
-        if offset >= 32 && has_headroom(*pos, match_length, 32, out.len()) {
+        if offset >= 16 && has_headroom(*pos, match_length, 32, out.len()) {
             paranoid_unsafe_call!(crate::primitives::wild_copy_match_32(
                 out,
                 start,
@@ -688,6 +688,73 @@ mod test {
         ));
     }
 
+    /// Byte-by-byte reference decoder for well-formed blocks.
+    fn reference_decode(block: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        loop {
+            let token = block[i];
+            i += 1;
+            let mut lit = (token >> 4) as usize;
+            if lit == 15 {
+                loop {
+                    let b = block[i];
+                    i += 1;
+                    lit += b as usize;
+                    if b != 255 {
+                        break;
+                    }
+                }
+            }
+            out.extend_from_slice(&block[i..i + lit]);
+            i += lit;
+            if i == block.len() {
+                return out;
+            }
+            let offset = u16::from_le_bytes([block[i], block[i + 1]]) as usize;
+            i += 2;
+            let mut len = (token & 0xF) as usize + MINMATCH;
+            if len == MINMATCH + 15 {
+                loop {
+                    let b = block[i];
+                    i += 1;
+                    len += b as usize;
+                    if b != 255 {
+                        break;
+                    }
+                }
+            }
+            for _ in 0..len {
+                out.push(out[out.len() - offset]);
+            }
+        }
+    }
+
+    #[test]
+    fn long_overlapping_match_with_offset_16_to_31() {
+        for offset in 16..32u16 {
+            // 14 literals and a 4-byte match, then 14 more literals and a
+            // 70-byte match that overlaps its own output, then 64 trailing
+            // literals.
+            let mut block = vec![0xE0];
+            block.extend(1..=14u8);
+            block.extend(14u16.to_le_bytes());
+            block.push(0xEF);
+            block.extend(21..=34u8);
+            block.extend(offset.to_le_bytes());
+            block.push(70 - 19);
+            block.extend([0xF0, 64 - 15]);
+            block.extend((0..64).map(|i| 100 + i as u8));
+            let expected = reference_decode(&block);
+            assert_eq!(expected.len(), 14 + 4 + 14 + 70 + 64);
+            assert_eq!(
+                decompress(&block, expected.len()).unwrap(),
+                expected,
+                "offset {offset}"
+            );
+        }
+    }
+
     #[test]
     fn offset_0() {
         assert!(matches!(
@@ -929,7 +996,7 @@ mod kani_proofs {
         kani::assume(offset >= 2 && offset <= pos);
         let start = pos - offset;
 
-        if offset >= 32 && pos + match_length + 32 <= output.len() {
+        if offset >= 16 && pos + match_length + 32 <= output.len() {
             paranoid_unsafe_call!(crate::primitives::wild_copy_match_32(
                 &mut output,
                 start,
