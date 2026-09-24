@@ -41,6 +41,20 @@ const SWEEP_CODEC_ORDER: &[&str] = &["C lz4", "C lz4 (dict)", "lz4rip", "lz4rip 
 const STRUCTURED_CODEC_ORDER: &[&str] = &["C lz4", "lz4rip", "lz4_flex unsafe", "lz4_flex"];
 const STRUCTURED_DICT_CODEC_ORDER: &[&str] = &["C lz4 (dict 2K)", "lz4rip (dict 2K)"];
 
+const SMALL_PREFIXES: &[&str] = &["dickens", "nci", "xml", "x-ray"];
+const SMALL_ENCODE_CODEC_ORDER: &[&str] = &["C lz4", "lz4rip", "lz4_flex unsafe", "lz4_flex"];
+const SMALL_DECODE_CODEC_ORDER: &[&str] = &[
+    "C lz4",
+    "lz4rip",
+    "lz4rip paranoid",
+    "lz4_flex unsafe",
+    "lz4_flex",
+];
+const SMALL_ENCODE_SIZES: &[usize] = &[
+    512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576,
+];
+const SMALL_DECODE_SIZES: &[usize] = &[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072];
+
 const SWEEP_SIZES: &[usize] = &[
     64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576,
 ];
@@ -93,6 +107,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             std::fs::create_dir_all(&structured_dir)?;
             draw_structured(&cfg, &structured_dir, false)?;
             draw_structured(&cfg, &structured_dir, true)?;
+            draw_small(&cfg, &out_dir, false)?;
+            draw_small(&cfg, &out_dir, true)?;
+        }
+        ChartKind::SmallEncode => {
+            std::fs::create_dir_all(&out_dir)?;
+            draw_small(&cfg, &out_dir, false)?;
+        }
+        ChartKind::SmallDecode => {
+            std::fs::create_dir_all(&out_dir)?;
+            draw_small(&cfg, &out_dir, true)?;
         }
         ChartKind::Pipeline => {
             std::fs::create_dir_all(&out_dir)?;
@@ -138,6 +162,8 @@ enum ChartKind {
     Structured,
     StructuredNoDict,
     StructuredDict2k,
+    SmallEncode,
+    SmallDecode,
 }
 
 struct Args {
@@ -168,7 +194,7 @@ impl Args {
 
 fn print_help() {
     println!(
-        "Usage: lz4rip_charts [all|summary|pipeline|dict2k|sweep|structured|structured-no-dict|structured-dict2k] [OUT_DIR]"
+        "Usage: lz4rip_charts [all|summary|pipeline|dict2k|sweep|structured|structured-no-dict|structured-dict2k|small-encode|small-decode] [OUT_DIR]"
     );
 }
 
@@ -182,6 +208,8 @@ fn parse_chart_kind(s: &str) -> Option<ChartKind> {
         "structured" => Some(ChartKind::Structured),
         "structured-no-dict" | "structured_no_dict" => Some(ChartKind::StructuredNoDict),
         "structured-dict2k" | "structured_dict2k" => Some(ChartKind::StructuredDict2k),
+        "small-encode" | "small_encode" => Some(ChartKind::SmallEncode),
+        "small-decode" | "small_decode" => Some(ChartKind::SmallDecode),
         _ => None,
     }
 }
@@ -985,6 +1013,163 @@ fn draw_structured(cfg: &Config, out_dir: &Path, dict: bool) -> Result<(), Box<d
         width as f64 / 2.0,
         leg_y + rows as f64 * LEGEND_ROW_H + 18.0,
     )?;
+    area.present()?;
+    drop(area);
+    finish_svg(&path, width, height)?;
+    println!("wrote {}", path.display());
+    Ok(())
+}
+
+/// Throughput against input size on leading slices of four Silesia files:
+/// `small_encode.svg` or `small_decode.svg`.
+fn draw_small(cfg: &Config, out_dir: &Path, decode: bool) -> Result<(), Box<dyn Error>> {
+    let rows = load_cache_dir(&cache_dir(cfg).join("small"));
+    let (order, sizes, file, what) = if decode {
+        (
+            SMALL_DECODE_CODEC_ORDER,
+            SMALL_DECODE_SIZES,
+            "small_decode.svg",
+            "Decode",
+        )
+    } else {
+        (
+            SMALL_ENCODE_CODEC_ORDER,
+            SMALL_ENCODE_SIZES,
+            "small_encode.svg",
+            "Encode",
+        )
+    };
+    let codecs = select_codecs(&rows, order);
+    if codecs.is_empty() {
+        return Err(
+            "small: no cache rows. Run `cargo run --release --example lz4rip_bench -- --small` first."
+                .into(),
+        );
+    }
+    let mbs = |row: &BenchRow| {
+        let ns = if decode {
+            row.decompress_ns
+        } else {
+            row.compress_ns
+        };
+        (ns > 0.0).then(|| row.input_size as f64 / ns * 1000.0)
+    };
+    let value = |codec: &str, prefix: &str, size: usize| {
+        let name = format!("{prefix}_{size}");
+        rows.iter()
+            .rev()
+            .find(|r| r.codec == codec && r.input == name)
+            .and_then(mbs)
+    };
+
+    let width = 830;
+    let panel_w = 700.0;
+    let panel_h = 220.0;
+    let top = if cfg.hw_label.is_some() { 66.0 } else { 48.0 };
+    let left = 90.0;
+    let gap = 50.0;
+    let n = SMALL_PREFIXES.len() as f64;
+    let total_h = n * panel_h + (n - 1.0) * gap;
+    let height = (top + total_h + 110.0) as u32;
+    let path = output_path(out_dir, file);
+    let area = root(&path, width, height)?;
+    chart_header(
+        &area,
+        width,
+        &if decode {
+            "Decode Throughput vs Input Size (Silesia slices, C lz4 blocks)".to_string()
+        } else {
+            "Encode Throughput vs Input Size (Silesia slices, no dictionary)".to_string()
+        },
+        cfg.hw_label.as_deref(),
+        18,
+    )?;
+
+    let x_min = (sizes[0] as f64 / 1.25).log10();
+    let x_max = (*sizes.last().unwrap() as f64 * 1.25).log10();
+    for (pi, prefix) in SMALL_PREFIXES.iter().enumerate() {
+        let p_top = top + pi as f64 * (panel_h + gap);
+        let p_bot = p_top + panel_h;
+        let x_right = left + panel_w;
+        let values = codecs
+            .iter()
+            .flat_map(|c| sizes.iter().filter_map(|&s| value(c, prefix, s)))
+            .collect::<Vec<_>>();
+        if values.is_empty() {
+            continue;
+        }
+        let y_min = values.iter().copied().fold(f64::INFINITY, f64::min) / 1.15;
+        let y_max = values.iter().copied().fold(0.0, f64::max) * 1.15;
+        let map_x =
+            |size: usize| left + ((size as f64).log10() - x_min) / (x_max - x_min) * panel_w;
+        let map_y = |v: f64| {
+            p_bot - (v.log10() - y_min.log10()) / (y_max.log10() - y_min.log10()) * panel_h
+        };
+
+        text(
+            &area,
+            *prefix,
+            px((left + x_right) / 2.0),
+            px(p_top - 12.0),
+            12,
+            TEXT,
+            HPos::Center,
+            true,
+        )?;
+        line(&area, left, p_bot, x_right, p_bot, AXIS, 2)?;
+        for &size in sizes {
+            let x = map_x(size);
+            line(&area, x, p_top, x, p_bot, GRID, 1)?;
+            text(
+                &area,
+                fmt_size(size),
+                px(x),
+                px(p_bot + 16.0),
+                9,
+                MUTED,
+                HPos::Center,
+                false,
+            )?;
+        }
+        for tick in log_ticks(y_min, y_max) {
+            let y = map_y(tick);
+            if p_top + 5.0 < y && y < p_bot - 5.0 {
+                line(&area, left, y, x_right, y, GRID, 1)?;
+                text(
+                    &area,
+                    format!("{tick:.0}"),
+                    px(left - 8.0),
+                    px(y),
+                    9,
+                    MUTED,
+                    HPos::Right,
+                    false,
+                )?;
+            }
+        }
+        for codec in &codecs {
+            let Some(style) = cfg.style(codec) else {
+                continue;
+            };
+            let pts = sizes
+                .iter()
+                .filter_map(|&s| value(codec, prefix, s).map(|v| (map_x(s), map_y(v))))
+                .collect::<Vec<_>>();
+            polyline(&area, &pts, style.color, 2, 1.0, false)?;
+            for (x, y) in pts {
+                dot(&area, x, y, 3, style.color)?;
+            }
+        }
+    }
+    vtext(
+        &area,
+        &format!("{} MB/s (log scale)", what.to_lowercase()),
+        20,
+        px(top + total_h / 2.0),
+        11,
+        TEXT,
+    )?;
+    draw_legend(&area, cfg, &codecs, left + 40.0, top + total_h + 50.0, 2)?;
     area.present()?;
     drop(area);
     finish_svg(&path, width, height)?;

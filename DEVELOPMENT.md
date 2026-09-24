@@ -31,8 +31,14 @@ taskset -c 0 cargo run --release --example lz4rip_bench -- --dict-silesia
 taskset -c 0 cargo run --release --example lz4rip_bench -- --structured
 taskset -c 0 cargo run --release --example lz4rip_bench -- --structured-dict
 taskset -c 0 cargo run --release --example lz4rip_bench -- --sweep
+taskset -c 0 cargo run --release --example lz4rip_bench -- --small
+taskset -c 0 cargo run --release --example lz4rip_bench --features paranoid -- --small --impl lz4rip
 cargo run --manifest-path bench/Cargo.toml --bin lz4rip_charts -- all doc/charts/x86_64
 ```
+
+`--small` benchmarks leading slices (512 B to 1 MiB) of four Silesia files
+with reused compressor state and writes `small_encode.svg` and
+`small_decode.svg`. Every implementation decodes C lz4's blocks.
 
 Rerun only lz4rip (other impls served from cache), then regenerate charts:
 ```sh
