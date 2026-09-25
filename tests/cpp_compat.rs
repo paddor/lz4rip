@@ -6,7 +6,10 @@ mod common;
 use common::*;
 #[cfg(feature = "frame")]
 use lz4rip::frame::BlockMode;
-use lz4rip::{block::decompress, compress as compress_block};
+use lz4rip::{
+    block::{decompress, validate_block},
+    compress as compress_block,
+};
 
 fn lz4_cpp_block_compress(input: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
@@ -44,11 +47,23 @@ fn lz4_cpp_frame_decompress(input: &[u8]) -> Vec<u8> {
 fn test_block_compat(bytes: &[u8]) {
     if !bytes.is_empty() {
         let compressed = lz4_cpp_block_compress(bytes);
+        assert_eq!(
+            validate_block(&compressed, bytes.len())
+                .unwrap()
+                .decoded_len,
+            bytes.len()
+        );
         let decompressed = decompress(&compressed, bytes.len()).unwrap();
         assert_eq!(decompressed, bytes);
     }
 
     let compressed = compress_block(bytes);
+    assert_eq!(
+        validate_block(&compressed, bytes.len())
+            .unwrap()
+            .decoded_len,
+        bytes.len()
+    );
     let decompressed = lz4_cpp_block_decompress(&compressed, bytes.len());
     assert_eq!(decompressed, bytes);
 }
@@ -100,6 +115,20 @@ fn block_compat_dickens() {
 #[test]
 fn block_compat_empty() {
     test_block_compat(b"");
+}
+
+#[test]
+fn block_invalid_compat() {
+    let malformed: &[&[u8]] = &[&[], &[0x10], &[0, 0], &[0, 0, 0], &[0, 1, 0], &[0xF0, 0xFF]];
+
+    for &block in malformed {
+        assert!(validate_block(block, 64).is_err(), "{block:?}");
+        let mut output = [0u8; 64];
+        assert!(
+            lzzzz::lz4::decompress(block, &mut output).is_err(),
+            "{block:?}"
+        );
+    }
 }
 
 #[cfg(feature = "frame")]

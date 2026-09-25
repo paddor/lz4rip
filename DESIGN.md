@@ -30,6 +30,13 @@ Crossover analysis against `bs6` (C lz4's default) at various transfer bandwidth
 
 Below ~50 MB/s, the 8pp ratio difference dominates and bs6 is 1-2% faster end-to-end. Above that, bs3's compression speed advantage takes over. For memory-to-memory, IPC, local storage, and datacenter networking, bs3 is the right choice.
 
+Inputs from 1 KB to 16 KB use bitshift 4. Short text has few early matches,
+and bs3 skipped most of it: a reused `Compressor` compressed 2 KB slices of
+dickens at 1.10, C lz4 at 1.26. With bs4 (and the table clear below) it
+compresses them at 1.17, at the same speed. Incompressible input of this size
+gets about 2x slower (x-ray 2 KB: 6.4 to 3.1 GB/s), still 2.6x C lz4's speed.
+Inputs up to 1 KB keep bs3.
+
 ## Hash tables
 
 Two hash table types, distinguished by stored value width, each generic over a
@@ -50,7 +57,7 @@ matching C lz4's floor), checked at compile time in `new()`.
 
 Which table a given config uses:
 
-- **No-dict** (`CompressorRef`/`Compressor`): always `HashTableU32<N>`. `N` is honored for every call. Epoch-based reuse for inputs up to 8 KB advances a stream offset instead of clearing, so stale entries fall outside `MAX_DISTANCE` and are rejected by the distance check.
+- **No-dict** (`CompressorRef`/`Compressor`): always `HashTableU32<N>`. `N` is honored for every call. Epoch-based reuse for inputs up to 1 KB advances a stream offset instead of clearing, so stale entries fall outside `MAX_DISTANCE` and are rejected by the distance check. Larger inputs clear the table: on a stream of different messages, a table full of stale entries made 2-8 KB inputs 50-70% slower on text and 10-25% slower on XML and database records than the clear itself costs. Incompressible input of that size loses 7-26% to the clear.
 - **Dict** (`DictCompressorRef`/`DictCompressor`) with dict + input < 64 KB: two `HashTableU32U16<N>` tables, a cleared main table and a read-only pristine table probed on main-table miss. `N` is honored.
 - **Dict** with dict + input >= 64 KB: positions exceed `u16`, so it builds a fresh `HashTableU32<N>` sized to the compressor's own `N` and runs the single-table path. `N` is honored here too: a tiny-`N` dict compressor stays small even on the overflow path (relevant for no-alloc, where that table is a stack frame). At the standard `N` (4096) this is a 16 KB `u32` table, matching C lz4's default table size for large inputs.
 

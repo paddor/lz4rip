@@ -91,3 +91,15 @@ name = "fuzz_roundtrip_tiny_tables"
 path = "fuzz_targets/fuzz_roundtrip_tiny_tables.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_validate_block"
+path = "fuzz_targets/fuzz_validate_block.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_validate_block_dict"
+path = "fuzz_targets/fuzz_validate_block_dict.rs"
+test = false
+doc = false

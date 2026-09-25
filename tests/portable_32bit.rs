@@ -16,6 +16,8 @@ fn block_roundtrip_no_dict() {
     let input: Vec<u8> = (0u8..=255).cycle().take(128 * 1024).collect();
     let mut compressed = vec![0u8; lz4rip::block::get_maximum_output_size(input.len())];
     let n = lz4rip::block::compress_into(&input, &mut compressed).unwrap();
+    let validation = lz4rip::block::validate_block(&compressed[..n], input.len()).unwrap();
+    assert_eq!(validation.decoded_len, input.len());
 
     let mut out = vec![0u8; input.len()];
     let m = lz4rip::block::decompress_into(&compressed[..n], &mut out).unwrap();
@@ -35,10 +37,27 @@ fn block_roundtrip_with_trained_dict() {
     let input = sample(999);
     let mut compressor = lz4rip::block::DictCompressor::new(&dict);
     let compressed = compressor.compress(&input);
+    let validation =
+        lz4rip::block::validate_block_with_dict(&compressed, input.len(), &dict).unwrap();
+    assert_eq!(validation.decoded_len, input.len());
 
     let decompressor = lz4rip::block::Decompressor::with_dict(&dict);
     let out = decompressor.decompress(&compressed, input.len()).unwrap();
     assert_eq!(out, input);
+}
+
+#[test]
+fn validator_checks_length_arithmetic() {
+    let block = [0xF0, 0xFF];
+    assert!(matches!(
+        lz4rip::block::validate_block(&block, usize::MAX),
+        Err(lz4rip::block::DecompressError::ExpectedAnotherByte)
+    ));
+
+    assert!(matches!(
+        lz4rip::block::validate_block(&block, 1),
+        Err(lz4rip::block::DecompressError::DecodedSizeMismatch { .. })
+    ));
 }
 
 #[cfg(feature = "frame")]

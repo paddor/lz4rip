@@ -56,6 +56,18 @@ pub enum DecompressError {
     OffsetZero,
     /// Deduplication offset out of bounds (not in buffer).
     OffsetOutOfBounds,
+    /// Decoded size does not match the caller's expected size.
+    ///
+    /// When `actual` is greater than `expected`, validation stops at the first
+    /// sequence that proves the mismatch. In that case, `actual` is the
+    /// decoded position reached by that sequence, not necessarily the size the
+    /// complete block would produce.
+    DecodedSizeMismatch {
+        /// Expected decoded size.
+        expected: usize,
+        /// Decoded position that proved the mismatch.
+        actual: usize,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +99,12 @@ impl fmt::Display for DecompressError {
             DecompressError::OffsetZero => f.write_str("0 is not a valid match offset"),
             DecompressError::OffsetOutOfBounds => {
                 f.write_str("the offset to copy is not contained in the decompressed buffer")
+            }
+            DecompressError::DecodedSizeMismatch { expected, actual } => {
+                write!(
+                    f,
+                    "decoded size mismatch, expected {expected}, got {actual}"
+                )
             }
         }
     }

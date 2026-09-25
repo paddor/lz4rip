@@ -68,8 +68,9 @@
 ///
 /// See the [spec](https://github.com/lz4/lz4/blob/dev/doc/lz4_Block_format.md).
 ///
-/// Without the `alloc` feature, only [`decompress_into`],
-/// [`decompress_into_with_dict`], and [`DecompressorRef`] are available.
+/// Without the `alloc` feature, [`decompress_into`],
+/// [`decompress_into_with_dict`], [`validate_block`],
+/// [`validate_block_with_dict`], and [`DecompressorRef`] remain available.
 ///
 /// # Example: block format roundtrip
 /// ```
@@ -81,7 +82,10 @@
 /// ```
 pub mod block {
     pub use lz4rip_core::{CompressError, DecompressError};
-    pub use lz4rip_decode::{DecompressorRef, decompress_into, decompress_into_with_dict};
+    pub use lz4rip_decode::{
+        BlockValidation, DecompressorRef, decompress_into, decompress_into_with_dict,
+        validate_block, validate_block_with_dict,
+    };
     pub use lz4rip_encode::{
         CompressorRef, CompressorRefN, DEFAULT_DICT_ENTRIES, DEFAULT_NODICT_ENTRIES,
         DictCompressorRef, DictCompressorRefN, MIN_ENTRIES, compress_into, compress_into_with_dict,
@@ -104,7 +108,7 @@ pub mod frame;
 pub use block::{compress, decompress};
 pub use block::{
     compress_into, compress_into_with_dict, decompress_into, decompress_into_with_dict,
-    get_maximum_output_size,
+    get_maximum_output_size, validate_block, validate_block_with_dict,
 };
 
 #[cfg(test)]

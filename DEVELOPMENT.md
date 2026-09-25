@@ -31,8 +31,17 @@ taskset -c 0 cargo run --release --example lz4rip_bench -- --dict-silesia
 taskset -c 0 cargo run --release --example lz4rip_bench -- --structured
 taskset -c 0 cargo run --release --example lz4rip_bench -- --structured-dict
 taskset -c 0 cargo run --release --example lz4rip_bench -- --sweep
+taskset -c 0 cargo run --release --example lz4rip_bench -- --small
+taskset -c 0 cargo run --release --example lz4rip_bench --features paranoid -- --small --impl lz4rip
 cargo run --manifest-path bench/Cargo.toml --bin lz4rip_charts -- all doc/charts/x86_64
 ```
+
+`--small` benchmarks slices (512 B to 1 MiB) of four Silesia files with
+reused compressor state and writes `small_encode.svg` and `small_decode.svg`.
+Each timed pass walks up to 64 distinct slices of one size, so no codec sees
+the same input twice in a row. Repeating one input lets the branch predictor
+learn it and distorts results. Every implementation decodes C lz4's blocks
+(thick lines) and its own output (thin lines).
 
 Rerun only lz4rip (other impls served from cache), then regenerate charts:
 ```sh
@@ -120,9 +129,10 @@ runs without file or network permissions.
 Proves decompressor bounds safety via bounded model checking. Requires
 [Kani](https://model-checking.github.io/kani/) (`cargo install --locked kani-verifier && cargo kani setup`).
 
-Six proof harnesses in `crates/decode/src/decompress.rs`: three exhaustive
-end-to-end proofs (4-byte, 6-byte, dict 6-byte inputs) and three fast-path
-margin/primitive proofs.
+Nine proof harnesses in `crates/decode/src/decompress.rs` and
+`crates/decode/src/validate.rs`: three exhaustive decompression proofs, three
+fast-path margin/primitive proofs, two validator proofs, and one checked
+decoded-position proof.
 
 ```sh
 # all harnesses, single-threaded (~25 min)
@@ -144,6 +154,8 @@ cargo +nightly fuzz run fuzz_decomp_corrupt_block
 cargo +nightly fuzz run fuzz_decomp_corrupt_frame
 cargo +nightly fuzz run fuzz_decomp_no_output_leak
 cargo +nightly fuzz run fuzz_roundtrip_cpp_compress
+cargo +nightly fuzz run fuzz_validate_block
+cargo +nightly fuzz run fuzz_validate_block_dict
 ```
 
 ## Feature flags

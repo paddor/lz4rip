@@ -61,6 +61,23 @@ assert_eq!(&output[..n], input);
 The `_into` variants write into a caller-provided buffer. The plain variants
 allocate and require the `alloc` feature.
 
+Untrusted raw blocks can be validated without allocating or reconstructing the
+decoded payload. Validation checks the complete block grammar, match offsets,
+and exact decoded size. It does not validate application payload meaning.
+
+```rust
+use lz4rip::block::{compress, validate_block};
+
+let input = b"record group";
+let compressed = compress(input);
+let validation = validate_block(&compressed, input.len()).unwrap();
+assert_eq!(validation.decoded_len, input.len());
+```
+
+Use `validate_block_with_dict` when decompression will use an external
+dictionary. Both validators work in `no_std` without `alloc`, and their memory
+use does not depend on decoded size.
+
 ### No-alloc / embedded
 
 All `_into` functions and the `CompressorRef`/`DictCompressorRef`/`DecompressorRef`

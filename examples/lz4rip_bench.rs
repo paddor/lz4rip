@@ -95,17 +95,36 @@ impl BenchResult {
     }
 }
 
+/// Minimum CPU time per timed batch. `CLOCK_PROCESS_CPUTIME_ID` is a real
+/// syscall, so reading it once per call would dominate tiny inputs.
+const MIN_BATCH_NS: u64 = 100_000;
+
 fn bench_loop<F: FnMut()>(warmup: usize, target_ns: u64, rounds: usize, mut f: F) -> f64 {
     for _ in 0..warmup {
         f();
+    }
+    // Double the batch until one batch runs long enough that the timer read
+    // costs well under 1% of it.
+    let mut batch = 1u64;
+    loop {
+        let start = cpu_nanos();
+        for _ in 0..batch {
+            std::hint::black_box(&mut f)();
+        }
+        if cpu_nanos() - start >= MIN_BATCH_NS || batch >= 1 << 20 {
+            break;
+        }
+        batch *= 2;
     }
     let mut best = f64::MAX;
     for _ in 0..rounds {
         let mut iters = 0u64;
         let start = cpu_nanos();
         loop {
-            std::hint::black_box(&mut f)();
-            iters += 1;
+            for _ in 0..batch {
+                std::hint::black_box(&mut f)();
+            }
+            iters += batch;
             if cpu_nanos() - start >= target_ns {
                 break;
             }
@@ -756,6 +775,275 @@ fn run_sweep(dict: &[u8], inputs: &[(String, Vec<u8>)]) {
     save_results_to("sweep", &all_results);
 }
 
+/// C lz4 through its stream API. `LZ4_resetStream_fast` reuses the table for
+/// inputs under 4 KB, as a hot loop over small messages would.
+fn bench_c_lz4_stream(data: &[u8], name: &str, target_ns: u64) -> BenchResult {
+    let max_out = lz4rip::block::get_maximum_output_size(data.len());
+    let stream = unsafe { LZ4_createStream() };
+    assert!(!stream.is_null());
+    let mut comp_buf = vec![0u8; max_out];
+
+    unsafe {
+        LZ4_resetStream_fast(stream);
+    }
+    let comp_len = unsafe {
+        LZ4_compress_fast_continue(
+            stream,
+            data.as_ptr(),
+            comp_buf.as_mut_ptr(),
+            data.len() as c_int,
+            max_out as c_int,
+            1,
+        )
+    };
+    assert!(comp_len > 0);
+    let comp_len = comp_len as usize;
+    let compressed = comp_buf[..comp_len].to_vec();
+    let mut decomp_buf = vec![0u8; data.len()];
+
+    let compress_ns = bench_loop(3, target_ns, 10, || unsafe {
+        LZ4_resetStream_fast(stream);
+        LZ4_compress_fast_continue(
+            stream,
+            data.as_ptr(),
+            comp_buf.as_mut_ptr(),
+            data.len() as c_int,
+            max_out as c_int,
+            1,
+        );
+    });
+
+    let decompress_ns = bench_loop(3, target_ns, 10, || {
+        let _ = lzzzz::lz4::decompress(
+            std::hint::black_box(&compressed),
+            std::hint::black_box(&mut decomp_buf),
+        );
+    });
+
+    unsafe { LZ4_freeStream(stream) };
+
+    BenchResult {
+        codec: "C lz4".to_string(),
+        input_name: name.to_string(),
+        input_size: data.len(),
+        compressed_size: comp_len,
+        compress_ns,
+        decompress_ns,
+    }
+}
+
+/// lz4rip through a reused `Compressor`: the epoch trick skips the table
+/// clear for inputs up to 8 KB.
+fn bench_lz4rip_compressor(data: &[u8], name: &str, codec: &str, target_ns: u64) -> BenchResult {
+    let max_out = lz4rip::block::get_maximum_output_size(data.len());
+    let mut compressor = lz4rip::block::Compressor::new();
+    let mut comp_buf = vec![0u8; max_out];
+    let comp_len = compressor.compress_into(data, &mut comp_buf).unwrap();
+    let compressed = comp_buf[..comp_len].to_vec();
+    let mut decomp_buf = vec![0u8; data.len()];
+
+    let compress_ns = bench_loop(3, target_ns, 10, || {
+        let _ = std::hint::black_box(&mut compressor).compress_into(
+            std::hint::black_box(data),
+            std::hint::black_box(&mut comp_buf),
+        );
+    });
+
+    let decompress_ns = bench_loop(3, target_ns, 10, || {
+        let _ = lz4rip::block::decompress_into(
+            std::hint::black_box(&compressed),
+            std::hint::black_box(&mut decomp_buf),
+        );
+    });
+
+    BenchResult {
+        codec: codec.to_string(),
+        input_name: name.to_string(),
+        input_size: data.len(),
+        compressed_size: comp_len,
+        compress_ns,
+        decompress_ns,
+    }
+}
+
+const SMALL_PREFIXES: &[&str] = &["dickens", "nci", "xml", "x-ray"];
+const SMALL_SIZES: &[usize] = &[
+    512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576,
+];
+
+/// Distinct leading-aligned slices per file and size for `--small`. Each
+/// timed operation walks all of them, so a codec never sees the same input
+/// twice in a row, as in a stream of different messages.
+const SMALL_SLICES: usize = 64;
+
+/// Compresses every slice in turn with `codec`, reusing its state. Returns
+/// the time per pass over all slices and the compressed blocks.
+fn small_encode(codec: &str, slices: &[&[u8]], target_ns: u64) -> (f64, Vec<Vec<u8>>) {
+    let max_out = lz4rip::block::get_maximum_output_size(slices[0].len());
+    let mut out = vec![0u8; max_out];
+    let mut blocks = Vec::with_capacity(slices.len());
+    match codec {
+        "C lz4" => {
+            let stream = unsafe { LZ4_createStream() };
+            assert!(!stream.is_null());
+            let compress = |data: &[u8], out: &mut [u8]| unsafe {
+                LZ4_resetStream_fast(stream);
+                let n = LZ4_compress_fast_continue(
+                    stream,
+                    data.as_ptr(),
+                    out.as_mut_ptr(),
+                    data.len() as c_int,
+                    out.len() as c_int,
+                    1,
+                );
+                assert!(n > 0, "C lz4 compress failed");
+                n as usize
+            };
+            for s in slices {
+                let n = compress(s, &mut out);
+                blocks.push(out[..n].to_vec());
+            }
+            let ns = bench_loop(3, target_ns, 10, || {
+                for s in slices {
+                    std::hint::black_box(compress(std::hint::black_box(s), &mut out));
+                }
+            });
+            unsafe { LZ4_freeStream(stream) };
+            (ns, blocks)
+        }
+        "lz4_flex unsafe" => time_encode(slices, &mut out, target_ns, |d, o| {
+            lz4_flex_unsafe::block::compress_into(d, o).unwrap()
+        }),
+        "lz4_flex" => time_encode(slices, &mut out, target_ns, |d, o| {
+            lz4_flex_upstream::block::compress_into(d, o).unwrap()
+        }),
+        _ => {
+            let mut compressor = lz4rip::block::Compressor::new();
+            time_encode(slices, &mut out, target_ns, |d, o| {
+                compressor.compress_into(d, o).unwrap()
+            })
+        }
+    }
+}
+
+/// Collects `compress`'s blocks for `slices`, then times passes over them.
+fn time_encode(
+    slices: &[&[u8]],
+    out: &mut [u8],
+    target_ns: u64,
+    mut compress: impl FnMut(&[u8], &mut [u8]) -> usize,
+) -> (f64, Vec<Vec<u8>>) {
+    let blocks = slices
+        .iter()
+        .map(|s| {
+            let n = compress(s, out);
+            out[..n].to_vec()
+        })
+        .collect();
+    let ns = bench_loop(3, target_ns, 10, || {
+        for s in slices {
+            std::hint::black_box(compress(std::hint::black_box(s), out));
+        }
+    });
+    (ns, blocks)
+}
+
+/// Decodes every block in turn with `codec`'s decoder after checking that
+/// each one restores its slice. Returns the time per pass.
+fn small_decode(codec: &str, blocks: &[Vec<u8>], slices: &[&[u8]], target_ns: u64) -> f64 {
+    match codec {
+        "C lz4" => time_decode(codec, blocks, slices, target_ns, |b, o| {
+            lzzzz::lz4::decompress(b, o).unwrap()
+        }),
+        "lz4_flex unsafe" => time_decode(codec, blocks, slices, target_ns, |b, o| {
+            lz4_flex_unsafe::block::decompress_into(b, o).unwrap()
+        }),
+        "lz4_flex" => time_decode(codec, blocks, slices, target_ns, |b, o| {
+            lz4_flex_upstream::block::decompress_into(b, o).unwrap()
+        }),
+        _ => time_decode(codec, blocks, slices, target_ns, |b, o| {
+            lz4rip::block::decompress_into(b, o).unwrap()
+        }),
+    }
+}
+
+fn time_decode(
+    codec: &str,
+    blocks: &[Vec<u8>],
+    slices: &[&[u8]],
+    target_ns: u64,
+    mut decode: impl FnMut(&[u8], &mut [u8]) -> usize,
+) -> f64 {
+    let mut out = vec![0u8; slices[0].len()];
+    for (b, s) in blocks.iter().zip(slices) {
+        assert_eq!(
+            decode(b, &mut out),
+            s.len(),
+            "{codec}: wrong decoded length"
+        );
+        assert_eq!(&out[..], *s, "{codec}: wrong decoded bytes");
+    }
+    bench_loop(3, target_ns, 10, || {
+        for b in blocks {
+            std::hint::black_box(decode(std::hint::black_box(b), &mut out));
+        }
+    })
+}
+
+/// Slices of four Silesia files, compressed with reused state as a hot loop
+/// over messages of that size would. Each row covers one pass over up to
+/// `SMALL_SLICES` distinct slices: `input_size` and `compressed_size` are
+/// totals, times are per pass. Every codec decodes C lz4's blocks, so decode
+/// times compare the same input; `<codec> (own)` rows hold the decode time
+/// of the codec's own output.
+fn run_small(only: &[String], inputs: &[(String, Vec<u8>)]) {
+    let target_ns = 20_000_000u64;
+    let codecs = [LZ4RIP_CODEC, "C lz4", "lz4_flex unsafe", "lz4_flex"];
+    let mut all_results: Vec<BenchResult> = Vec::new();
+
+    for (source_name, source) in inputs {
+        if !SMALL_PREFIXES.contains(&source_name.as_str()) {
+            continue;
+        }
+        for &size in SMALL_SIZES {
+            let slices: Vec<&[u8]> = source.chunks_exact(size).take(SMALL_SLICES).collect();
+            if slices.is_empty() {
+                continue;
+            }
+            let name = prefixed_input_name(source_name, size);
+            let total_in = size * slices.len();
+            let (_, c_blocks) = small_encode("C lz4", &slices, target_ns / 10);
+            for codec in codecs {
+                if !only.is_empty() && !only.iter().any(|o| codec.contains(o.as_str())) {
+                    continue;
+                }
+                eprintln!(
+                    "  {codec} x {name} ({} slices): benchmarking...",
+                    slices.len()
+                );
+                let (compress_ns, own) = small_encode(codec, &slices, target_ns);
+                let compressed_size = own.iter().map(Vec::len).sum();
+                let row = |codec: String, decompress_ns: f64| BenchResult {
+                    codec,
+                    input_name: name.clone(),
+                    input_size: total_in,
+                    compressed_size,
+                    compress_ns,
+                    decompress_ns,
+                };
+                if codec != "C lz4" {
+                    let own_ns = small_decode(codec, &own, &slices, target_ns);
+                    all_results.push(row(format!("{codec} (own)"), own_ns));
+                }
+                let c_ns = small_decode(codec, &c_blocks, &slices, target_ns);
+                all_results.push(row(codec.to_string(), c_ns));
+            }
+        }
+    }
+
+    save_results_to("small", &all_results);
+}
+
 const STRUCTURED_SIZES: &[usize] = &[256, 512, 1024, 2048, 4096, 8192];
 const STRUCTURED_CODECS: &[&str] = &["C lz4", "lz4rip", "lz4_flex unsafe", "lz4_flex"];
 
@@ -770,7 +1058,6 @@ fn run_structured(only: &[String], inputs: &[(String, Vec<u8>)]) {
             }
             let data = source[..size].to_vec();
             let name = prefixed_input_name(source_name, size);
-            let max_out = lz4rip::block::get_maximum_output_size(data.len());
 
             for &codec in STRUCTURED_CODECS {
                 if !only.is_empty() && !only.iter().any(|o| codec.contains(o.as_str())) {
@@ -780,91 +1067,8 @@ fn run_structured(only: &[String], inputs: &[(String, Vec<u8>)]) {
                 eprintln!("  {codec} x {name}: benchmarking...");
 
                 let r = match codec {
-                    "C lz4" => {
-                        // C lz4 stream API: LZ4_resetStream_fast reuses table for <4KB
-                        let stream = unsafe { LZ4_createStream() };
-                        assert!(!stream.is_null());
-                        let mut comp_buf = vec![0u8; max_out];
-
-                        unsafe {
-                            LZ4_resetStream_fast(stream);
-                        }
-                        let comp_len = unsafe {
-                            LZ4_compress_fast_continue(
-                                stream,
-                                data.as_ptr(),
-                                comp_buf.as_mut_ptr(),
-                                data.len() as c_int,
-                                max_out as c_int,
-                                1,
-                            )
-                        };
-                        assert!(comp_len > 0);
-                        let comp_len = comp_len as usize;
-                        let compressed = comp_buf[..comp_len].to_vec();
-                        let mut decomp_buf = vec![0u8; data.len()];
-
-                        let compress_ns = bench_loop(3, target_ns, 10, || unsafe {
-                            LZ4_resetStream_fast(stream);
-                            LZ4_compress_fast_continue(
-                                stream,
-                                data.as_ptr(),
-                                comp_buf.as_mut_ptr(),
-                                data.len() as c_int,
-                                max_out as c_int,
-                                1,
-                            );
-                        });
-
-                        let decompress_ns = bench_loop(3, target_ns, 10, || {
-                            let _ = lzzzz::lz4::decompress(
-                                std::hint::black_box(&compressed),
-                                std::hint::black_box(&mut decomp_buf),
-                            );
-                        });
-
-                        unsafe { LZ4_freeStream(stream) };
-
-                        BenchResult {
-                            codec: "C lz4".to_string(),
-                            input_name: name.clone(),
-                            input_size: data.len(),
-                            compressed_size: comp_len,
-                            compress_ns,
-                            decompress_ns,
-                        }
-                    }
-                    "lz4rip" => {
-                        // Compressor reuse: epoch trick skips memset for <=8KB
-                        let mut compressor = lz4rip::block::Compressor::new();
-                        let mut comp_buf = vec![0u8; max_out];
-                        let comp_len = compressor.compress_into(&data, &mut comp_buf).unwrap();
-                        let compressed = comp_buf[..comp_len].to_vec();
-                        let mut decomp_buf = vec![0u8; data.len()];
-
-                        let compress_ns = bench_loop(3, target_ns, 10, || {
-                            let _ = std::hint::black_box(&mut compressor).compress_into(
-                                std::hint::black_box(&data),
-                                std::hint::black_box(&mut comp_buf),
-                            );
-                        });
-
-                        let decompress_ns = bench_loop(3, target_ns, 10, || {
-                            let _ = lz4rip::block::decompress_into(
-                                std::hint::black_box(&compressed),
-                                std::hint::black_box(&mut decomp_buf),
-                            );
-                        });
-
-                        BenchResult {
-                            codec: "lz4rip".to_string(),
-                            input_name: name.clone(),
-                            input_size: data.len(),
-                            compressed_size: comp_len,
-                            compress_ns,
-                            decompress_ns,
-                        }
-                    }
+                    "C lz4" => bench_c_lz4_stream(&data, &name, target_ns),
+                    "lz4rip" => bench_lz4rip_compressor(&data, &name, "lz4rip", target_ns),
                     "lz4_flex unsafe" => bench_lz4_flex_unsafe(&data, &name, target_ns),
                     "lz4_flex" => bench_lz4_flex_upstream(&data, &name, target_ns),
                     _ => unreachable!(),
@@ -1012,6 +1216,7 @@ fn main() {
     let mut sweep_dict: Option<String> = None;
     let mut structured = false;
     let mut structured_dict = false;
+    let mut small = false;
     let mut file_filter: Vec<String> = Vec::new();
     let mut extra_files: Vec<String> = Vec::new();
     let mut i = 1;
@@ -1046,6 +1251,9 @@ fn main() {
             "--structured-dict" => {
                 structured_dict = true;
             }
+            "--small" => {
+                small = true;
+            }
             "--files" => {
                 i += 1;
                 if i < args.len() {
@@ -1061,6 +1269,12 @@ fn main() {
             _ => {}
         }
         i += 1;
+    }
+
+    if small {
+        let inputs = load_silesia_inputs();
+        run_small(&only, &inputs);
+        return;
     }
 
     if structured {
