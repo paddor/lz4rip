@@ -2,10 +2,17 @@
 
 ## [Unreleased]
 
+## [0.11.7] - 2026-09-25
+
 ### Added
 
-- Add no-alloc raw block validation with exact decoded-size and dictionary
-  checks, without reconstructing or retaining decoded bytes.
+- Add `validate_block` and `validate_block_with_dict`: no-alloc raw block
+  validation with exact decoded-size and dictionary checks, without
+  reconstructing or retaining decoded bytes. A size mismatch returns the new
+  `DecompressError::DecodedSizeMismatch`.
+- Add `--small` to the benchmark and the `small_encode.svg` and
+  `small_decode.svg` charts: 64 distinct Silesia slices per size, from 512 B
+  to 1 MiB.
 
 ### Changed
 
@@ -19,6 +26,10 @@
   1.10.
 - Faster decoding of long matches with offsets from 16 to 31: they take the
   wide copy path. 3-15% faster on Silesia slices from 512 B to 64 KB.
+- Bump `lz4rip-core` to 0.5.6, `lz4rip-encode` to 0.10.7, and
+  `lz4rip-decode` to 0.10.4, and raise the facade crate's dependency floors to
+  those versions.
+- Bump the JSR/WASM package to `0.2.13`.
 
 ## [0.11.6] - 2026-09-10
 
