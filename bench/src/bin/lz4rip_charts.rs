@@ -50,10 +50,9 @@ const SMALL_DECODE_CODEC_ORDER: &[&str] = &[
     "lz4_flex unsafe",
     "lz4_flex",
 ];
-const SMALL_ENCODE_SIZES: &[usize] = &[
+const SMALL_SIZES: &[usize] = &[
     512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576,
 ];
-const SMALL_DECODE_SIZES: &[usize] = &[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072];
 
 const SWEEP_SIZES: &[usize] = &[
     64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576,
@@ -1024,20 +1023,11 @@ fn draw_structured(cfg: &Config, out_dir: &Path, dict: bool) -> Result<(), Box<d
 /// `small_encode.svg` or `small_decode.svg`.
 fn draw_small(cfg: &Config, out_dir: &Path, decode: bool) -> Result<(), Box<dyn Error>> {
     let rows = load_cache_dir(&cache_dir(cfg).join("small"));
-    let (order, sizes, file, what) = if decode {
-        (
-            SMALL_DECODE_CODEC_ORDER,
-            SMALL_DECODE_SIZES,
-            "small_decode.svg",
-            "Decode",
-        )
+    let sizes = SMALL_SIZES;
+    let (order, file, what) = if decode {
+        (SMALL_DECODE_CODEC_ORDER, "small_decode.svg", "Decode")
     } else {
-        (
-            SMALL_ENCODE_CODEC_ORDER,
-            SMALL_ENCODE_SIZES,
-            "small_encode.svg",
-            "Encode",
-        )
+        (SMALL_ENCODE_CODEC_ORDER, "small_encode.svg", "Encode")
     };
     let codecs = select_codecs(&rows, order);
     if codecs.is_empty() {
@@ -1231,11 +1221,14 @@ where
             };
             let ops = geomean(
                 rows.iter()
-                    .filter_map(|r| (get_ns(r) > 0.0).then(|| 1e9 / get_ns(r))),
+                    .filter(|&r| get_ns(r) > 0.0)
+                    .map(|r| 1e9 / get_ns(r)),
             );
-            let mbs = geomean(rows.iter().filter_map(|r| {
-                (get_ns(r) > 0.0).then(|| r.input_size as f64 / get_ns(r) * 1000.0)
-            }));
+            let mbs = geomean(
+                rows.iter()
+                    .filter(|&r| get_ns(r) > 0.0)
+                    .map(|r| r.input_size as f64 / get_ns(r) * 1000.0),
+            );
             if let (Some(ops), Some(mbs)) = (ops, mbs) {
                 all_ops.push(ops);
                 all_mbs.push(mbs);
