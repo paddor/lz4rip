@@ -45,6 +45,13 @@ Charts use the full 12-file Silesia corpus.
 ![LZ4 Structured No Dict](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/structured/no_dict.svg)
 </details>
 
+<details>
+<summary>x86_64 small inputs (Silesia slices from 512 B to 1 MiB, encode and decode)</summary>
+
+![LZ4 Small Input Encode](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/small_encode.svg)
+![LZ4 Small Input Decode](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/small_decode.svg)
+</details>
+
 ## Block format
 
 ```rust
