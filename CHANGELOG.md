@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.11.9] - 2026-09-27
+
 ### Fixed
 
 - Fix excessive compression CPU cost for small blocks introduced in 0.11.7
