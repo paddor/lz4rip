@@ -64,13 +64,13 @@ fn test_comp_flex() {
 }
 
 /// Text from a 64-word vocabulary: repeats are short and sparse, like prose.
-fn wordy_text(len: usize) -> Vec<u8> {
+fn wordy_text(len: usize, seed: u64) -> Vec<u8> {
     const WORDS: &str = "the of and to in is was for on that with as by at from his her \
         they this have had were which their are but not one all been when there she \
         would what so if will more no out up into could them than then some other \
         time very about only upon over such said great before after little";
     let words: Vec<&str> = WORDS.split_whitespace().collect();
-    let mut x = 0x9E37_79B9_7F4A_7C15u64;
+    let mut x = seed;
     let mut out = Vec::with_capacity(len + 16);
     while out.len() < len {
         x ^= x << 13;
@@ -83,16 +83,30 @@ fn wordy_text(len: usize) -> Vec<u8> {
     out
 }
 
-/// A reused `Compressor` keeps searching short text instead of skipping
-/// ahead after a few misses.
+/// Small messages still compress usefully with throughput-first skipping.
+/// Rotate inputs and cross the table-reuse boundary with one compressor.
 #[test]
 fn small_text_compresses_with_reused_compressor() {
     let mut compressor = lz4rip::block::Compressor::new();
-    for (len, min_ratio) in [(1024, 1.42), (2048, 1.56)] {
-        let data = wordy_text(len);
-        let compressed = compressor.compress(&data);
-        let ratio = len as f64 / compressed.len() as f64;
-        assert!(ratio > min_ratio, "{len} bytes: ratio {ratio:.3}");
-        assert_eq!(lz4rip::decompress(&compressed, len).unwrap(), data);
+    let cases = [
+        (1023, 1.25),
+        (1024, 1.25),
+        (1025, 1.25),
+        (2047, 1.4),
+        (2048, 1.4),
+        (2049, 1.4),
+    ];
+    let mut total_bytes = [0; 6];
+    for seed in 1..=64 {
+        for (i, &(len, _)) in cases.iter().enumerate() {
+            let data = wordy_text(len, 0x9E37_79B9_7F4A_7C15 ^ seed);
+            let compressed = compressor.compress(&data);
+            total_bytes[i] += compressed.len();
+            assert_eq!(lz4rip::decompress(&compressed, len).unwrap(), data);
+        }
+    }
+    for ((len, min_ratio), compressed) in cases.into_iter().zip(total_bytes) {
+        let ratio = (64 * len) as f64 / compressed as f64;
+        assert!(ratio > min_ratio, "{len} bytes: aggregate ratio {ratio:.3}");
     }
 }

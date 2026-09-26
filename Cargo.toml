@@ -70,6 +70,10 @@ panic = "unwind"
 name = "quickstart"
 required-features = ["frame"]
 
+[[example]]
+name = "perf_verify"
+required-features = ["std"]
+
 [[bench]]
 harness = false
 name = "profile_decompress"

@@ -10,6 +10,7 @@ Session.vim
 /info/
 /corpus/*
 .chart_hw
+.perf_hw
 /sweep_bins/
 /sweep_results.json
 *.sweep_bak

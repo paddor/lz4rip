@@ -30,12 +30,10 @@ Crossover analysis against `bs6` (C lz4's default) at various transfer bandwidth
 
 Below ~50 MB/s, the 8pp ratio difference dominates and bs6 is 1-2% faster end-to-end. Above that, bs3's compression speed advantage takes over. For memory-to-memory, IPC, local storage, and datacenter networking, bs3 is the right choice.
 
-Inputs from 1 KB to 16 KB use bitshift 4. Short text has few early matches,
-and bs3 skipped most of it: a reused `Compressor` compressed 2 KB slices of
-dickens at 1.10, C lz4 at 1.26. With bs4 (and the table clear below) it
-compresses them at 1.17, at the same speed. Incompressible input of this size
-gets about 2x slower (x-ray 2 KB: 6.4 to 3.1 GB/s), still 2.6x C lz4's speed.
-Inputs up to 1 KB keep bs3.
+All input sizes use the constant bitshift 3. For messages up to 2 KiB,
+this prioritizes low compression CPU cost over the modest size savings
+from denser match search. Table reuse and clearing are independent of
+skip acceleration, as described below.
 
 ## Hash tables
 

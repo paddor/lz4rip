@@ -1,5 +1,69 @@
 # Development
 
+## Test suite and performance gates
+
+Run `scripts/test-all.sh` for formatting, Clippy, correctness tests, feature
+checks, and the local performance gate, in that order. Work runs serially.
+`CI`, `GITHUB_ACTIONS`, or `LZ4RIP_SKIP_PERF=1` explicitly skips hardware
+measurements. CI still runs the gate's configuration and fixture tests.
+Shared CI runners do not have calibrated CPU limits; run the local gate
+before accepting performance-sensitive changes.
+
+```sh
+cargo run --release --example perf_verify
+```
+
+The gate requires an ignored `.perf_hw` file in the working directory. It
+fails on missing, duplicate, unknown, incomplete, nonpositive, or nonfinite
+limits. A missing file never silently downgrades verification to a smoke test.
+Debug and `paranoid` builds are rejected because their CPU budgets differ.
+
+Each case rotates 64 distinct deterministic buffers through a reused
+compressor and reused output allocation. Families: JSON log records,
+JSON with a trained 2 KiB dictionary, a varied word stream, and incompressible
+binary bytes. Dictionary training seeds are disjoint from measurement seeds.
+Sizes: 64, 128, 256, 512, 1024, 1536, 2048, and 4096 bytes. The 4 KiB case
+guards the benefit from clearing the no-dictionary table above 1 KiB.
+Every input roundtrips before timing; decoding measures the encoder's own
+blocks, so additional decode cost from a changed representation is covered.
+
+Encode and decode each use the median of three 50 ms thread-CPU windows,
+each after 10 ms warmup. Samples come from three separate passes over all
+cases, so a brief disturbance does not contaminate all samples of one case.
+Linux pins the process to the first allowed CPU; use
+`taskset` to choose another. Each window has a five-second wall-time bound.
+Run on an idle machine, with stable frequency settings, and never overlap
+the gate with builds, tests, or other benchmarks. After collecting three
+samples for a metric, a failed median limit immediately exits nonzero.
+
+Calibrate only from a reviewed, known-good build on the target machine:
+
+```sh
+cargo run --release --example perf_verify -- --measure-only > /tmp/lz4rip-perf-samples.txt
+```
+
+Repeat measurements to establish normal variation. The output contains all
+96 required `family.bytes.metric=value` entries. Copy them into `.perf_hw`
+and set explicit upper limits with suitable headroom, for example 10% above
+the largest repeated CPU median and 5% above compressed bytes. Investigate
+large variation rather than accepting noisy peaks as the baseline. Keep the
+compiler, build flags, and hardware fixed and record them in comment lines.
+Example entries (illustrative, not a complete configuration):
+
+```text
+# Host, compiler, flags, known-good revision, calibration date
+json.1024.encode_ns=2000
+json.1024.decode_ns=300
+json.1024.bytes=680
+```
+
+Compression ratio cannot compensate for failing CPU limits. Likewise, a
+literal-only shortcut cannot pass by becoming fast while expanding output.
+No command automatically rewrites limits. Investigate failures before
+recalibrating; accepting limits from a regressed build defeats the gate.
+Validate the limits against a known regressed implementation as a negative
+control, alongside a passing known-good build.
+
 ## Benchmarks
 
 Set the CPU governor to `performance` before benchmarking to prevent frequency scaling from skewing results:
