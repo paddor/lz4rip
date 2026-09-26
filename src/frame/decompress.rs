@@ -38,6 +38,11 @@ pub struct FrameDecoderOptions<'a> {
 /// Bytes read will be decompressed according to the [LZ4 frame format](
 /// https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md).
 ///
+/// After a read error, the decoder abandons the current frame state. The next
+/// read expects a frame header at the reader's current position. Replacing the
+/// reader through [`get_mut`](Self::get_mut) allows decoding a new frame, while
+/// [`FrameDecoderOptions::max_output`] still counts all earlier output.
+///
 /// # Example 1
 /// Reading decompressed data from a file.
 ///
@@ -184,7 +189,9 @@ impl<R: io::Read> FrameDecoder<R> {
         Ok(required)
     }
 
-    fn add_output_len(&mut self, len: usize) -> io::Result<()> {
+    /// Returns the total output after `len` more bytes, or an error if it
+    /// exceeds `max_output`.
+    fn check_output_len(&self, len: usize) -> io::Result<usize> {
         let Some(actual) = self.bytes_output.checked_add(len) else {
             return Err(Error::DecompressedSizeLimit {
                 limit: self.max_output,
@@ -199,8 +206,7 @@ impl<R: io::Read> FrameDecoder<R> {
             }
             .into());
         }
-        self.bytes_output = actual;
-        Ok(())
+        Ok(actual)
     }
 
     #[inline]
@@ -265,7 +271,7 @@ impl<R: io::Read> FrameDecoder<R> {
                 if len > max_block_size {
                     return Err(Error::BlockTooBig.into());
                 }
-                self.add_output_len(len)?;
+                let bytes_output = self.check_output_len(len)?;
                 self.r.read_exact(vec_resize_and_get_mut(
                     &mut self.dst,
                     self.dst_start,
@@ -279,6 +285,7 @@ impl<R: io::Read> FrameDecoder<R> {
                     )?;
                 }
 
+                self.bytes_output = bytes_output;
                 self.dst_end += len;
                 self.content_len += len as u64;
             }
@@ -304,7 +311,10 @@ impl<R: io::Read> FrameDecoder<R> {
                     debug_assert!(head.len() - self.dst_start >= max_block_size);
                     decompress_into_sink_with_dict::<true>(
                         &self.src[..len],
-                        &mut SliceSink::new(head, self.dst_start),
+                        &mut SliceSink::new(
+                            &mut head[..self.dst_start + max_block_size],
+                            self.dst_start,
+                        ),
                         ext_dict,
                     )
                 } else if !self.dict.is_empty() {
@@ -334,7 +344,7 @@ impl<R: io::Read> FrameDecoder<R> {
                 }
                 .map_err(Error::DecompressionError)?;
 
-                self.add_output_len(decomp_size)?;
+                self.bytes_output = self.check_output_len(decomp_size)?;
                 self.dst_end += decomp_size;
                 self.content_len += decomp_size as u64;
             }
@@ -374,7 +384,15 @@ impl<R: io::Read> FrameDecoder<R> {
             if self.current_frame_info.is_none() && self.read_frame_info()? == 0 {
                 return Ok(0);
             }
-            let read = self.read_block()?;
+            let read = match self.read_block() {
+                Ok(read) => read,
+                Err(e) => {
+                    // The frame's history, length, and checksum state are
+                    // unusable after a failed block.
+                    self.current_frame_info = None;
+                    return Err(e);
+                }
+            };
             if read != 0 {
                 return Ok(read);
             }
