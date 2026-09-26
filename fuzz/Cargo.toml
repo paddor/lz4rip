@@ -103,3 +103,9 @@ name = "fuzz_validate_block_dict"
 path = "fuzz_targets/fuzz_validate_block_dict.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_decoder_reuse"
+path = "fuzz_targets/fuzz_decoder_reuse.rs"
+test = false
+doc = false

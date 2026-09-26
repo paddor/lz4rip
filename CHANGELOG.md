@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+### Added
+
+- Add the `fuzz_decoder_reuse` fuzz target. It checks that a reused
+  `FrameDecoder` or block `Decompressor` decodes every input like a new one,
+  including after malformed inputs.
+
+### Fixed
+
+- `FrameDecoder` abandons the current frame state after a read error. The next
+  read expects a frame header at the reader's current position. Before, a retry
+  skipped the failed block and could finish the frame without an error, and a
+  reader replaced through `get_mut` failed valid frames with `BlockTooBig`.
+- `FrameDecoder` no longer counts an uncompressed block toward `max_output`
+  when reading or checking that block fails.
+- `FrameDecoder` rejects a linked block that decodes to more than the frame's
+  maximum block size. Once the 64 KB history window wrapped, such blocks were
+  accepted. C lz4 rejects them.
+
 ## [0.11.7] - 2026-09-25
 
 ### Added

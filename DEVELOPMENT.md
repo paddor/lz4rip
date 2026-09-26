@@ -156,6 +156,7 @@ cargo +nightly fuzz run fuzz_decomp_no_output_leak
 cargo +nightly fuzz run fuzz_roundtrip_cpp_compress
 cargo +nightly fuzz run fuzz_validate_block
 cargo +nightly fuzz run fuzz_validate_block_dict
+cargo +nightly fuzz run fuzz_decoder_reuse
 ```
 
 ## Feature flags
