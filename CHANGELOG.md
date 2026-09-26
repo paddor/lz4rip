@@ -2,11 +2,17 @@
 
 ## [Unreleased]
 
+## [0.11.8] - 2026-09-26
+
 ### Added
 
 - Add the `fuzz_decoder_reuse` fuzz target. It checks that a reused
   `FrameDecoder` or block `Decompressor` decodes every input like a new one,
   including after malformed inputs.
+
+### Changed
+
+- Bump the JSR/WASM package to `0.2.14`.
 
 ### Fixed
 
