@@ -33,6 +33,7 @@ jobs:
       - run: cargo check --no-default-features -p lz4rip
       - run: cargo check --no-default-features --features paranoid -p lz4rip
       - run: cargo check --no-default-features --features paranoid -p lz4rip-encode
+      - run: cargo test --example perf_verify
 
   nightly:
     name: nightly
@@ -72,8 +73,8 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo +nightly fmt --all -- --check
-      - run: cargo +nightly clippy --lib --tests
-      - run: cargo +nightly clippy --lib --tests --features paranoid
+      - run: cargo +nightly clippy --lib --tests --examples
+      - run: cargo +nightly clippy --lib --tests --examples --features paranoid
       - run: cargo +nightly clippy --no-default-features --features paranoid -p lz4rip
 
   ci-success:

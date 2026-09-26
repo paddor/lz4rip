@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fix excessive compression CPU cost for small blocks introduced in 0.11.7
+  by restoring faster match skipping, at the cost of slightly larger output.
+
 ## [0.11.8] - 2026-09-26
 
 ### Added
