@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `FrameDecoder::read_to_end` reserves a frame's declared content size, up to
+  128 MiB, before appending its first block. It used to grow the output block
+  by block: a 10 MB frame decoded into a 16 MiB buffer after 8 reallocations.
+- `FrameDecoder` sizes and zeroes its buffers for at most a frame's declared
+  content size instead of the frame's maximum block size. A 2 KB frame that
+  declared its size and used 4 MB blocks took 8.4 MB of heap and spent 99% of
+  its decode time zeroing a 4 MB buffer.
+- A reused `FrameDecoder` keeps its zeroed buffers across frames instead of
+  zeroing them again for every frame.
+
 ## [0.11.9] - 2026-09-27
 
 ### Fixed
