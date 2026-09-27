@@ -10,17 +10,35 @@ use super::Error;
 use super::header::{
     BlockInfo, BlockMode, FrameInfo, MAGIC_NUMBER_SIZE, MAX_FRAME_INFO_SIZE, MIN_FRAME_INFO_SIZE,
 };
-use lz4rip_core::{SliceSink, WINDOW_SIZE};
+use lz4rip_core::{DecompressError, SliceSink, WINDOW_SIZE};
 use lz4rip_decode::decompress_into_sink_with_dict;
 
-fn vec_sink_for_decompression(
-    vec: &mut Vec<u8>,
-    offset: usize,
-    pos: usize,
-    required_capacity: usize,
-) -> SliceSink<'_> {
-    vec.resize(offset + required_capacity, 0);
-    SliceSink::new(&mut vec[offset..], pos)
+/// Largest `read_to_end` reservation taken from a declared content size. The
+/// frame header is untrusted, so a frame that declares more grows the output
+/// as its blocks are decoded.
+const MAX_CONTENT_SIZE_RESERVE: usize = 128 * 1024 * 1024;
+
+/// Returns a sink over `vec[..end]` that writes from `pos`. `vec` never
+/// shrinks, so later blocks and frames reuse bytes that were already zeroed.
+fn vec_sink_for_decompression(vec: &mut Vec<u8>, pos: usize, end: usize) -> SliceSink<'_> {
+    if vec.len() < end {
+        vec.resize(end, 0);
+    }
+    SliceSink::new(&mut vec[..end], pos)
+}
+
+/// Returns the frame's declared content size, or `usize::MAX` when it
+/// declares none or more than fits in memory.
+fn declared_size(frame_info: &FrameInfo) -> usize {
+    frame_info
+        .content_size
+        .and_then(|size| usize::try_from(size).ok())
+        .unwrap_or(usize::MAX)
+}
+
+/// Ensures `vec` can hold `capacity` bytes without reallocating.
+fn reserve_capacity(vec: &mut Vec<u8>, capacity: usize) {
+    vec.reserve_exact(capacity.saturating_sub(vec.len()));
 }
 
 /// Options for [`FrameDecoder`].
@@ -80,6 +98,9 @@ pub struct FrameDecoder<R: io::Read> {
     expected_dict_id: Option<u32>,
     max_output: usize,
     bytes_output: usize,
+    /// Output bytes `read_to_end` reserves for the current frame's declared
+    /// content size, taken when the frame's first block is read.
+    content_reserve: Option<usize>,
 }
 
 impl<R: io::Read> FrameDecoder<R> {
@@ -100,6 +121,7 @@ impl<R: io::Read> FrameDecoder<R> {
             expected_dict_id: None,
             max_output: usize::MAX,
             bytes_output: 0,
+            content_reserve: None,
         }
     }
 
@@ -170,16 +192,23 @@ impl<R: io::Read> FrameDecoder<R> {
             (Some(_), Some(_)) => {}
         }
 
+        // A valid frame decodes no more than its declared content size. The
+        // buffers keep their length across frames, so a reused decoder zeroes
+        // each byte once.
         let max_block_size = frame_info.block_size.get_size();
         let dst_size = if frame_info.block_mode == BlockMode::Linked {
             max_block_size * 2 + WINDOW_SIZE
         } else {
             max_block_size
         };
-        self.src.clear();
-        self.dst.clear();
-        self.src.reserve_exact(max_block_size);
-        self.dst.reserve_exact(dst_size);
+        let content_size = declared_size(&frame_info);
+        reserve_capacity(&mut self.src, max_block_size.min(content_size));
+        reserve_capacity(&mut self.dst, dst_size.min(content_size));
+        self.content_reserve = frame_info.content_size.map(|_| {
+            content_size
+                .min(self.max_output.saturating_sub(self.bytes_output))
+                .min(MAX_CONTENT_SIZE_RESERVE)
+        });
         self.current_frame_info = Some(frame_info);
         self.content_hasher = XxHash32::with_seed(0);
         self.content_len = 0;
@@ -238,7 +267,6 @@ impl<R: io::Read> FrameDecoder<R> {
         let max_block_size = frame_info.block_size.get_size();
         if frame_info.block_mode == BlockMode::Linked {
             let dst_size = max_block_size * 2 + WINDOW_SIZE;
-            debug_assert!(self.dst.capacity() >= dst_size);
             if self.dst_start + max_block_size > dst_size {
                 debug_assert!(self.dst_start >= max_block_size + WINDOW_SIZE);
                 self.ext_dict_offset = self.dst_start - WINDOW_SIZE;
@@ -255,7 +283,6 @@ impl<R: io::Read> FrameDecoder<R> {
             }
         } else {
             debug_assert_eq!(self.ext_dict_len, 0);
-            debug_assert!(self.dst.capacity() >= max_block_size);
             self.dst_start = 0;
             self.dst_end = 0;
         }
@@ -301,46 +328,20 @@ impl<R: io::Read> FrameDecoder<R> {
                     Self::check_block_checksum(&self.src[..len], expected_checksum)?;
                 }
 
-                let with_dict_mode =
-                    frame_info.block_mode == BlockMode::Linked && self.ext_dict_len != 0;
-                let decomp_size = if with_dict_mode {
-                    debug_assert!(self.dst_start + max_block_size <= self.ext_dict_offset);
-                    let (head, tail) = self.dst.split_at_mut(self.ext_dict_offset);
-                    let ext_dict = &tail[..self.ext_dict_len];
-
-                    debug_assert!(head.len() - self.dst_start >= max_block_size);
-                    decompress_into_sink_with_dict::<true>(
-                        &self.src[..len],
-                        &mut SliceSink::new(
-                            &mut head[..self.dst_start + max_block_size],
-                            self.dst_start,
-                        ),
-                        ext_dict,
-                    )
-                } else if !self.dict.is_empty() {
-                    debug_assert!(self.dst.capacity() - self.dst_start >= max_block_size);
-                    decompress_into_sink_with_dict::<true>(
-                        &self.src[..len],
-                        &mut vec_sink_for_decompression(
-                            &mut self.dst,
-                            0,
-                            self.dst_start,
-                            self.dst_start + max_block_size,
-                        ),
-                        &self.dict,
-                    )
-                } else {
-                    debug_assert!(self.dst.capacity() - self.dst_start >= max_block_size);
-                    decompress_into_sink_with_dict::<false>(
-                        &self.src[..len],
-                        &mut vec_sink_for_decompression(
-                            &mut self.dst,
-                            0,
-                            self.dst_start,
-                            self.dst_start + max_block_size,
-                        ),
-                        b"",
-                    )
+                // Decode at most the bytes the frame still declares, so a
+                // small frame zeroes no more than its content. A block that
+                // fails within that limit is decoded again with the full
+                // block limit, so errors, including the length reported at
+                // the end mark, match an unlimited decode.
+                let remaining = frame_info.content_size.map_or(usize::MAX, |size| {
+                    usize::try_from(size.saturating_sub(self.content_len)).unwrap_or(usize::MAX)
+                });
+                let mut limit = max_block_size.min(remaining);
+                let decomp_size = loop {
+                    match self.decompress_block(len, limit) {
+                        Err(_) if limit < max_block_size => limit = max_block_size,
+                        result => break result,
+                    }
                 }
                 .map_err(Error::DecompressionError)?;
 
@@ -377,6 +378,38 @@ impl<R: io::Read> FrameDecoder<R> {
         }
 
         Ok(self.dst_end - self.dst_start)
+    }
+
+    /// Decodes the compressed block in `src[..len]` to `dst_start`, writing
+    /// at most `limit` bytes.
+    fn decompress_block(&mut self, len: usize, limit: usize) -> Result<usize, DecompressError> {
+        let input = &self.src[..len];
+        let end = self.dst_start + limit;
+        let linked = self
+            .current_frame_info
+            .is_some_and(|info| info.block_mode == BlockMode::Linked);
+        if linked && self.ext_dict_len != 0 {
+            debug_assert!(end <= self.ext_dict_offset);
+            let (head, tail) = self.dst.split_at_mut(self.ext_dict_offset);
+            let ext_dict = &tail[..self.ext_dict_len];
+            decompress_into_sink_with_dict::<true>(
+                input,
+                &mut SliceSink::new(&mut head[..end], self.dst_start),
+                ext_dict,
+            )
+        } else if !self.dict.is_empty() {
+            decompress_into_sink_with_dict::<true>(
+                input,
+                &mut vec_sink_for_decompression(&mut self.dst, self.dst_start, end),
+                &self.dict,
+            )
+        } else {
+            decompress_into_sink_with_dict::<false>(
+                input,
+                &mut vec_sink_for_decompression(&mut self.dst, self.dst_start, end),
+                b"",
+            )
+        }
     }
 
     fn read_more(&mut self) -> io::Result<usize> {
@@ -421,15 +454,18 @@ impl<R: io::Read> io::Read for FrameDecoder<R> {
         loop {
             match self.fill_buf() {
                 Ok([]) => return Ok(written),
-                Ok(b) => {
-                    buf.extend_from_slice(b);
-                    let len = b.len();
-                    self.consume(len);
-                    written += len;
-                }
+                Ok(_) => {}
                 Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) => return Err(e),
             }
+            if let Some(reserve) = self.content_reserve.take() {
+                buf.reserve(reserve);
+            }
+            let block = &self.dst[self.dst_start..self.dst_end];
+            buf.extend_from_slice(block);
+            let len = block.len();
+            self.consume(len);
+            written += len;
         }
     }
 }
@@ -463,6 +499,7 @@ impl<R: fmt::Debug + io::Read> fmt::Debug for FrameDecoder<R> {
             .field("current_frame_info", &self.current_frame_info)
             .field("max_output", &self.max_output)
             .field("bytes_output", &self.bytes_output)
+            .field("content_reserve", &self.content_reserve)
             .finish()
     }
 }
