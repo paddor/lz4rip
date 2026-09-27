@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.11.10] - 2026-09-27
+
+### Changed
+
+- Bump the JSR/WASM package to `0.2.16`.
+
 ### Fixed
 
 - `FrameDecoder::read_to_end` reserves a frame's declared content size, up to
