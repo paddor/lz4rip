@@ -197,7 +197,7 @@ impl<W: io::Write> FrameEncoder<W> {
         &self.w
     }
 
-    /// Gets a reference to the underlying writer in this encoder.
+    /// Gets a mutable reference to the underlying writer in this encoder.
     pub fn get_mut(&mut self) -> &mut W {
         &mut self.w
     }

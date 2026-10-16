@@ -4,6 +4,9 @@
 #![deny(missing_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(not(feature = "std"), no_std)]
+// `optimize_attribute` is stable since 1.101. The gate keeps older nightlies
+// working.
+#![cfg_attr(feature = "nightly", allow(stable_features))]
 #![cfg_attr(feature = "nightly", feature(optimize_attribute))]
 #![cfg_attr(
     any(feature = "paranoid", target_pointer_width = "32"),

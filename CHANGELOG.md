@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- `decompress_into_uninit` decodes into `&mut [MaybeUninit<u8>]` and returns
+  the initialized prefix. `decompress_append` appends to a `Vec` by decoding
+  into its spare capacity. Neither zero-fills the output first. Both are also
+  methods on `DecompressorRef` and `Decompressor`. Paranoid and 32-bit builds
+  still zero-fill.
+
+### Changed
+
+- `decompress` and the `decompress` methods of `DecompressorRef` and
+  `Decompressor` no longer zero-fill the new `Vec`.
+- Paranoid builds of `lz4rip-decode` deny `unsafe_code` instead of forbidding
+  it. One `unsafe` block remains, in `decompress_into_uninit`: it views the
+  zero-filled caller buffer as bytes.
+- `lz4rip-core`: `slice_copy` is generic over `T: Copy`.
+
 ## [0.11.10] - 2026-09-27
 
 ### Changed

@@ -5,6 +5,14 @@
 //! are `unsafe fn` because callers must uphold bounds preconditions documented
 //! in each function's `debug_assert!` guards. The `paranoid` feature provides
 //! safe `fn` twins with no preconditions (violations panic via bounds checks).
+//!
+//! Default-build output buffers are `[MaybeUninit<u8>]` (see `crate::out`).
+//! Every unaligned load from output reads initialized bytes: history before
+//! the start position, or bytes stored earlier in the same call. Each chunk's
+//! source ends at or before that chunk's destination.
+
+#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
+use crate::out::OutByte;
 
 /// Read 1 byte without bounds checking.
 #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
@@ -46,7 +54,7 @@ pub(crate) fn read_u16_inbounds(input: &[u8], n: usize) -> u16 {
 pub(crate) unsafe fn wild_copy_16(
     src: &[u8],
     src_pos: usize,
-    dst: &mut [u8],
+    dst: &mut [OutByte],
     dst_pos: &mut usize,
     advance: usize,
 ) {
@@ -56,7 +64,7 @@ pub(crate) unsafe fn wild_copy_16(
     unsafe {
         core::ptr::copy_nonoverlapping(
             src.as_ptr().add(src_pos),
-            dst.as_mut_ptr().add(*dst_pos),
+            dst.as_mut_ptr().cast::<u8>().add(*dst_pos),
             16,
         );
     }
@@ -82,7 +90,7 @@ pub(crate) fn wild_copy_16(
 #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 #[inline]
 pub(crate) unsafe fn wild_match_copy_18(
-    buf: &mut [u8],
+    buf: &mut [OutByte],
     src_pos: usize,
     dst_pos: &mut usize,
     advance: usize,
@@ -91,7 +99,7 @@ pub(crate) unsafe fn wild_match_copy_18(
     debug_assert!(*dst_pos - src_pos >= 8);
     debug_assert!(advance <= 18);
     unsafe {
-        let ptr = buf.as_mut_ptr();
+        let ptr = buf.as_mut_ptr().cast::<u8>();
         core::ptr::copy_nonoverlapping(ptr.add(src_pos), ptr.add(*dst_pos), 8);
         core::ptr::copy_nonoverlapping(ptr.add(src_pos + 8), ptr.add(*dst_pos + 8), 8);
         core::ptr::copy_nonoverlapping(ptr.add(src_pos + 16), ptr.add(*dst_pos + 16), 2);
@@ -134,7 +142,7 @@ pub(crate) fn wild_match_copy_18(
 pub(crate) unsafe fn copy_from_src(
     src: &[u8],
     src_pos: usize,
-    dst: &mut [u8],
+    dst: &mut [OutByte],
     dst_pos: &mut usize,
     len: usize,
 ) {
@@ -143,7 +151,7 @@ pub(crate) unsafe fn copy_from_src(
     unsafe {
         core::ptr::copy_nonoverlapping(
             src.as_ptr().add(src_pos),
-            dst.as_mut_ptr().add(*dst_pos),
+            dst.as_mut_ptr().cast::<u8>().add(*dst_pos),
             len,
         );
     }
@@ -170,7 +178,7 @@ pub(crate) fn copy_from_src(
 #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 #[inline]
 pub(crate) unsafe fn copy_within_overlapping(
-    buf: &mut [u8],
+    buf: &mut [OutByte],
     start: usize,
     dst_pos: &mut usize,
     match_len: usize,
@@ -184,7 +192,7 @@ pub(crate) unsafe fn copy_within_overlapping(
     let initial = offset.min(match_len);
 
     unsafe {
-        let ptr = buf.as_mut_ptr();
+        let ptr = buf.as_mut_ptr().cast::<u8>();
         core::ptr::copy_nonoverlapping(ptr.add(start), ptr.add(dst), initial);
 
         let mut written = initial;
@@ -234,7 +242,7 @@ pub(crate) fn copy_within_overlapping(
 pub(crate) unsafe fn wild_copy_literals(
     src: &[u8],
     src_pos: usize,
-    dst: &mut [u8],
+    dst: &mut [OutByte],
     dst_pos: &mut usize,
     len: usize,
 ) {
@@ -243,7 +251,7 @@ pub(crate) unsafe fn wild_copy_literals(
     let d = *dst_pos;
     unsafe {
         let sp = src.as_ptr();
-        let dp = dst.as_mut_ptr();
+        let dp = dst.as_mut_ptr().cast::<u8>();
         let mut done = 0;
         loop {
             let v0 = (sp.add(src_pos + done) as *const u128).read_unaligned();
@@ -278,7 +286,7 @@ pub(crate) fn wild_copy_literals(
 #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 #[inline]
 pub(crate) unsafe fn wild_copy_match_8(
-    buf: &mut [u8],
+    buf: &mut [OutByte],
     src: usize,
     dst_pos: &mut usize,
     len: usize,
@@ -287,7 +295,7 @@ pub(crate) unsafe fn wild_copy_match_8(
     debug_assert!(*dst_pos + len + 8 <= buf.len());
     let dst = *dst_pos;
     unsafe {
-        let ptr = buf.as_mut_ptr();
+        let ptr = buf.as_mut_ptr().cast::<u8>();
         let mut done = 0;
         loop {
             let v = (ptr.add(src + done) as *const u64).read_unaligned();
@@ -313,7 +321,7 @@ pub(crate) fn wild_copy_match_8(buf: &mut [u8], src: usize, dst_pos: &mut usize,
 #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 #[inline]
 pub(crate) unsafe fn wild_copy_match_16(
-    buf: &mut [u8],
+    buf: &mut [OutByte],
     src: usize,
     dst_pos: &mut usize,
     len: usize,
@@ -322,7 +330,7 @@ pub(crate) unsafe fn wild_copy_match_16(
     debug_assert!(*dst_pos + len + 16 <= buf.len());
     let dst = *dst_pos;
     unsafe {
-        let ptr = buf.as_mut_ptr();
+        let ptr = buf.as_mut_ptr().cast::<u8>();
         let mut done = 0;
         loop {
             let v = (ptr.add(src + done) as *const u128).read_unaligned();
@@ -348,7 +356,7 @@ pub(crate) fn wild_copy_match_16(buf: &mut [u8], src: usize, dst_pos: &mut usize
 #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 #[inline]
 pub(crate) unsafe fn wild_copy_match_32(
-    buf: &mut [u8],
+    buf: &mut [OutByte],
     src: usize,
     dst_pos: &mut usize,
     len: usize,
@@ -357,7 +365,7 @@ pub(crate) unsafe fn wild_copy_match_32(
     debug_assert!(*dst_pos + len + 32 <= buf.len());
     let dst = *dst_pos;
     unsafe {
-        let ptr = buf.as_mut_ptr();
+        let ptr = buf.as_mut_ptr().cast::<u8>();
         let mut done = 0;
         loop {
             // Each 16-byte chunk is stored before the next is loaded, so the
@@ -408,7 +416,7 @@ fn match_copy(buf: &mut [u8], src: usize, dst_pos: &mut usize, len: usize) {
 #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
 #[inline]
 pub(crate) unsafe fn copy_within_nonoverlap(
-    buf: &mut [u8],
+    buf: &mut [OutByte],
     src: usize,
     dst_pos: &mut usize,
     len: usize,
@@ -416,7 +424,7 @@ pub(crate) unsafe fn copy_within_nonoverlap(
     debug_assert!(src + len <= *dst_pos);
     debug_assert!(*dst_pos + len <= buf.len());
     unsafe {
-        let ptr = buf.as_mut_ptr();
+        let ptr = buf.as_mut_ptr().cast::<u8>();
         core::ptr::copy_nonoverlapping(ptr.add(src), ptr.add(*dst_pos), len);
     }
     *dst_pos += len;

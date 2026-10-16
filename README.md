@@ -7,7 +7,7 @@ Originally derived from [lz4_flex](https://github.com/PSeitz/lz4_flex).
 ## Why lz4rip
 
 - **C lz4 speed, safe by construction.** Unsafe is isolated to a few internal modules for raw memory ops. See [SAFETY.md](SAFETY.md).
-- **Optional zero-unsafe build.** The `paranoid` feature compiles every crate with `#![forbid(unsafe_code)]`, swapping each unchecked op for a safe twin. No `unsafe` at all.
+- **Optional safe build.** The `paranoid` feature swaps each unchecked op for a safe twin. One `unsafe` block remains: `decompress_into_uninit` zero-fills the caller's uninitialized buffer, then views it as bytes.
 - **8 KB hash tables, or smaller.** Half the L1d footprint of C lz4 and lz4_flex by default; the table size is a compile-time const generic, so constrained targets can drop to a 2 KB, 1 KB, or 512 B table.
 - **Built-in dictionary training.** `DictTrainer` learns a dictionary from your data. No external tools needed.
 - **Hot-loop friendly.** Epoch-based table reuse skips clearing between calls for small inputs.
@@ -67,6 +67,21 @@ assert_eq!(&output[..n], input);
 
 The `_into` variants write into a caller-provided buffer. The plain variants
 allocate and require the `alloc` feature.
+
+To skip zero-filling the output, decode into uninitialized memory.
+`decompress_append` appends to a `Vec` through its spare capacity, and
+`decompress_into_uninit` takes `&mut [MaybeUninit<u8>]`:
+
+```rust
+use lz4rip::block::{compress, decompress_append};
+
+let input = b"Hello people, what's up?";
+let compressed = compress(input);
+
+let mut output = Vec::new();
+let n = decompress_append(&compressed, &mut output, input.len()).unwrap();
+assert_eq!(&output[..n], input);
+```
 
 Untrusted raw blocks can be validated without allocating or reconstructing the
 decoded payload. Validation checks the complete block grammar, match offsets,
@@ -134,7 +149,7 @@ table-size knob. The const-generic approach here lets you monomorphize different
 sizes in the same binary (e.g. 512 B for telemetry, 8 KB for bulk) with zero
 runtime cost.
 
-For a build with no `unsafe` at all, add the `paranoid` feature (see
+For a build without unchecked memory ops, add the `paranoid` feature (see
 [SAFETY.md](SAFETY.md)). It composes with `no_std`, no-alloc, and the table-size
 knob.
 

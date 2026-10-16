@@ -127,7 +127,7 @@ C lz4 uses the same technique. lz4_flex does not.
 ## Unsafe boundary
 
 The `lz4rip` facade exposes safe compression and decompression APIs. Unsafe is
-isolated to 20 blocks in four modules across three crates:
+isolated to 25 blocks in six modules across three crates:
 
 - `crates/encode/src/hashtable.rs` (5 blocks): `count_same_bytes_inbounds`,
   `get_at`, and architecture-width batch reads. Each has `debug_assert` guards
@@ -145,6 +145,22 @@ isolated to 20 blocks in four modules across three crates:
   `wild_match_copy_18`), `copy_within_nonoverlap`,
   `copy_within_overlapping`, `copy_from_src`. Each has `debug_assert` guards
   on bounds.
+- `crates/decode/src/out.rs` (3 blocks): layout casts between `[u8]` and
+  `[MaybeUninit<u8>]`. `out_from_init` views initialized output as decoder
+  output, `as_out_bytes` views input for copying, and `assume_init_prefix`
+  views the decoded prefix as bytes.
+- `crates/decode/src/decompress.rs` (2 blocks): `decompress_into_uninit`
+  returns the decoded prefix via `assume_init_prefix`, and `decompress_append`
+  extends the `Vec` length over it.
+
+The decoder output is `[MaybeUninit<u8>]` in default 64-bit builds, so callers
+can pass uninitialized memory. The decoder stores only bytes copied from the
+input, the dictionary, or output it already stored. It loads output bytes only
+after storing them, or from initialized history before the start position: each
+wild-copy chunk's source ends at or before that chunk's destination. Every byte
+below the final position was stored, so the decoded prefix is initialized.
+`fuzz_decomp_no_output_leak` checks that output never depends on prior buffer
+contents, and Miri runs `tests/uninit.rs`.
 
 `HashTable` is crate-private. `lz4rip-encode` exposes the concrete
 `compress_into_sink_with_table` wrapper for `HashTableU32` as doc-hidden
@@ -160,9 +176,11 @@ output slice trusted by the unsafe fast path.
 
 The safe-region margin computation in `decompress_internal` determines how far from buffer ends the fast path can operate. Inside the margin, unchecked reads and wild copies in `primitives.rs` are provably in-bounds. Outside it, the slow path uses `.get()` with explicit error returns.
 
-The `paranoid` feature (see [SAFETY.md](SAFETY.md)) replaces all 20 blocks with
-safe twins and adds `#![forbid(unsafe_code)]` to every crate, for a build with no
-`unsafe` at all.
+The `paranoid` feature (see [SAFETY.md](SAFETY.md)) replaces these blocks with
+safe code and decodes into `[u8]`. One block remains: `out::zero_init`
+zero-fills a caller's uninitialized buffer for `decompress_into_uninit` and
+views it as `[u8]`. `lz4rip-decode` therefore denies `unsafe_code` instead of
+forbidding it. Other crates keep `forbid(unsafe_code)`.
 
 ## Dictionary compression
 

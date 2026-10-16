@@ -71,7 +71,7 @@ pub enum Error {
     BlockChecksumError,
     /// The content checksum doesn't match.
     ContentChecksumError,
-    /// Read an skippable frame.
+    /// Read a skippable frame.
     /// The caller may read the specified amount of bytes from the underlying io::Read.
     SkippableFrame(u32),
     /// External dictionaries are not supported.
