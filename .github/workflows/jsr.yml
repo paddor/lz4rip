@@ -28,7 +28,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
-      - run: cargo install wasm-pack
+      - run: cargo install wasm-pack --locked
       - run: cd jsr && bash build.sh
       - run: cd jsr && deno task test
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
