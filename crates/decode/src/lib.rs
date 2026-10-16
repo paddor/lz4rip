@@ -6,9 +6,12 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(feature = "nightly", allow(internal_features))]
 #![cfg_attr(feature = "nightly", feature(core_intrinsics))]
+#![cfg_attr(feature = "nightly", feature(optimize_attribute))]
+// Paranoid and 32-bit builds deny unsafe code. The one exception,
+// `out::zero_init`, views a zero-filled uninitialized buffer as bytes.
 #![cfg_attr(
     any(feature = "paranoid", target_pointer_width = "32"),
-    forbid(unsafe_code)
+    deny(unsafe_code)
 )]
 
 #[cfg(feature = "alloc")]
@@ -29,14 +32,17 @@ macro_rules! paranoid_unsafe_call {
 }
 
 mod decompress;
+mod out;
 pub(crate) mod primitives;
 mod validate;
 
 #[cfg(feature = "alloc")]
 pub use decompress::Decompressor;
+pub use decompress::{
+    DecompressorRef, decompress_into, decompress_into_uninit, decompress_into_with_dict,
+};
 #[cfg(feature = "alloc")]
-pub use decompress::decompress;
-pub use decompress::{DecompressorRef, decompress_into, decompress_into_with_dict};
+pub use decompress::{decompress, decompress_append};
 pub use lz4rip_core::DecompressError;
 pub use validate::{BlockValidation, validate_block, validate_block_with_dict};
 

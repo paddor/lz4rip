@@ -3,9 +3,10 @@
 ## Unsafe boundary
 
 The `lz4rip` facade exposes safe compression and decompression APIs. The default
-build isolates unsafe code to 20 blocks in 4 modules across 3 crates. Most blocks
+build isolates unsafe code to 25 blocks in 6 modules across 3 crates. Most blocks
 perform unchecked reads or writes whose bounds are proven by safe-region margins
-computed in the algorithm code.
+computed in the algorithm code. The rest let the decoder write into
+uninitialized memory.
 
 The internal hash-table trait and generic decompression entry point are not
 exported, so downstream safe code cannot construct invalid match candidates for
@@ -13,17 +14,22 @@ unchecked encoder reads or supply a custom `Sink` whose capacity lies to the
 decoder fast path. See [DESIGN.md](DESIGN.md) for the unsafe-site inventory,
 frame-compression table invariants, and safe-region margin computation.
 
-## Paranoid build (zero unsafe)
+## Paranoid build
 
-The `paranoid` feature compiles every crate with `#![forbid(unsafe_code)]`, so the
-build contains no `unsafe` at all. Each unchecked memory op is replaced by a safe
-twin (bounds-checked indexing, `copy_within`/`copy_from_slice`, `from_ne_bytes`
+The `paranoid` feature replaces each unchecked memory op with a safe twin
+(bounds-checked indexing, `copy_within`/`copy_from_slice`, `from_ne_bytes`
 reads, `chunks_exact` match counting) with the same signature, so callers are
-unchanged. This is for users and policies that forbid `unsafe` outright (e.g.
-`#![forbid(unsafe_code)]` in a downstream crate, or certification regimes). It
-trades a small amount of throughput for the guarantee; the default build keeps the
-isolated-unsafe design above. The two builds are byte-for-byte compatible: output
-of one decompresses with the other.
+unchanged. `lz4rip-core`, `lz4rip-encode`, and the frame module compile with
+`forbid(unsafe_code)`. `lz4rip-decode` compiles with `deny(unsafe_code)` and one
+exception: `decompress_into_uninit` zero-fills the caller's uninitialized buffer,
+then views it as `[u8]`. Stable Rust has no safe way to make that view. The block
+runs only when `decompress_into_uninit` is called. `decompress_append` uses
+`Vec::resize` instead and needs no `unsafe`.
+
+This is for users and policies that minimize `unsafe`. It trades a small amount
+of throughput for the guarantee; the default build keeps the isolated-unsafe
+design above. The two builds are byte-for-byte compatible: output of one
+decompresses with the other.
 
 ## Why Rust matters here
 

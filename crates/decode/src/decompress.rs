@@ -1,14 +1,19 @@
 //! LZ4 block decompression.
 
 use core::fmt;
+use core::mem::MaybeUninit;
 
 use lz4rip_core::DecompressError;
 use lz4rip_core::MINMATCH;
 use lz4rip_core::Sink;
 use lz4rip_core::SliceSink;
 
-#[cfg(feature = "alloc")]
-use alloc::vec;
+#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
+use crate::out::assume_init_prefix;
+#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
+use crate::out::zero_init;
+use crate::out::{OutSink, out_from_init};
+
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 
@@ -162,9 +167,9 @@ fn does_token_fit(token: u8) -> bool {
 ///
 /// Returns the number of bytes written (decompressed) into `output`.
 #[inline]
-pub(crate) fn decompress_internal<const USE_DICT: bool, S: Sink>(
+pub(crate) fn decompress_internal<const USE_DICT: bool>(
     input: &[u8],
-    output: &mut S,
+    output: &mut OutSink<'_>,
     ext_dict: &[u8],
 ) -> Result<usize, DecompressError> {
     let mut input_pos = 0;
@@ -456,20 +461,24 @@ pub(crate) fn decompress_internal<const USE_DICT: bool, S: Sink>(
 /// Decompress into a `SliceSink`.
 ///
 /// This is cross-crate plumbing for the frame decoder. It keeps the generic
-/// `Sink` entry point private, so downstream safe code cannot supply a `Sink`
-/// implementation whose reported capacity disagrees with its output slice.
+/// decoder entry point private, so downstream safe code cannot supply an
+/// output buffer whose reported capacity disagrees with its slice.
 #[inline]
 pub fn decompress_into_sink_with_dict<const USE_DICT: bool>(
     input: &[u8],
     output: &mut SliceSink<'_>,
     ext_dict: &[u8],
 ) -> Result<usize, DecompressError> {
-    decompress_internal::<USE_DICT, _>(input, output, ext_dict)
+    let (out, pos) = output.output_mut_with_pos();
+    let mut sink = OutSink::new(out_from_init(out), *pos);
+    let result = decompress_internal::<USE_DICT>(input, &mut sink, ext_dict);
+    *pos = sink.pos();
+    result
 }
 
 #[inline]
 fn copy_from_dict(
-    output: &mut impl Sink,
+    output: &mut OutSink<'_>,
     ext_dict: &[u8],
     offset: usize,
     match_length: usize,
@@ -485,11 +494,115 @@ fn copy_from_dict(
     Ok(dict_match_length)
 }
 
+/// Decompress into uninitialized `output` and return its initialized prefix.
+#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
+#[inline]
+fn decompress_uninit<'a, const USE_DICT: bool>(
+    input: &[u8],
+    output: &'a mut [MaybeUninit<u8>],
+    ext_dict: &[u8],
+) -> Result<&'a mut [u8], DecompressError> {
+    let len = decompress_internal::<USE_DICT>(input, &mut OutSink::new(output, 0), ext_dict)?;
+    // SAFETY: decoding started at position 0 and returned `len`, the final
+    // position. The decoder stored every byte below it.
+    Ok(unsafe { assume_init_prefix(output, len) })
+}
+
+/// Decompress into uninitialized `output` and return its initialized prefix.
+#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
+#[inline]
+fn decompress_uninit<'a, const USE_DICT: bool>(
+    input: &[u8],
+    output: &'a mut [MaybeUninit<u8>],
+    ext_dict: &[u8],
+) -> Result<&'a mut [u8], DecompressError> {
+    let output = zero_init(output);
+    let len = decompress_internal::<USE_DICT>(input, &mut OutSink::new(output, 0), ext_dict)?;
+    Ok(&mut output[..len])
+}
+
+/// Decompress into the spare capacity of `output` and extend its length.
+#[cfg(all(
+    feature = "alloc",
+    not(any(feature = "paranoid", target_pointer_width = "32"))
+))]
+#[inline]
+fn decompress_append_internal<const USE_DICT: bool>(
+    input: &[u8],
+    output: &mut Vec<u8>,
+    max_size: usize,
+    ext_dict: &[u8],
+) -> Result<usize, DecompressError> {
+    output.reserve_exact(max_size);
+    let start = output.len();
+    let spare = &mut output.spare_capacity_mut()[..max_size];
+    let len = decompress_uninit::<USE_DICT>(input, spare, ext_dict)?.len();
+    // SAFETY: `decompress_uninit` initialized the first `len` spare bytes,
+    // and `len <= max_size` fits the reserved capacity.
+    unsafe { output.set_len(start + len) };
+    Ok(len)
+}
+
+/// Decompress into zero-filled new bytes of `output`, then truncate.
+#[cfg(all(
+    feature = "alloc",
+    any(feature = "paranoid", target_pointer_width = "32")
+))]
+#[inline]
+fn decompress_append_internal<const USE_DICT: bool>(
+    input: &[u8],
+    output: &mut Vec<u8>,
+    max_size: usize,
+    ext_dict: &[u8],
+) -> Result<usize, DecompressError> {
+    output.reserve_exact(max_size);
+    let start = output.len();
+    output.resize(start + max_size, 0);
+    let result = decompress_internal::<USE_DICT>(
+        input,
+        &mut OutSink::new(&mut output[start..], 0),
+        ext_dict,
+    );
+    output.truncate(start + *result.as_ref().unwrap_or(&0));
+    result
+}
+
 /// Decompress all bytes of `input` into `output`.
 /// `output` should be preallocated with a size of the uncompressed data.
 #[inline]
 pub fn decompress_into(input: &[u8], output: &mut [u8]) -> Result<usize, DecompressError> {
-    decompress_internal::<false, _>(input, &mut SliceSink::new(output, 0), b"")
+    decompress_internal::<false>(input, &mut OutSink::new(out_from_init(output), 0), b"")
+}
+
+/// Decompress all bytes of `input` into uninitialized `output`.
+///
+/// Returns the initialized prefix of `output` that holds the decompressed
+/// bytes. `output` should be at least the size of the uncompressed data.
+/// The buffer is not zero-filled first, except in `paranoid` and 32-bit
+/// builds.
+#[inline]
+pub fn decompress_into_uninit<'a>(
+    input: &[u8],
+    output: &'a mut [MaybeUninit<u8>],
+) -> Result<&'a mut [u8], DecompressError> {
+    decompress_uninit::<false>(input, output, b"")
+}
+
+/// Decompress all bytes of `input` and append them to `output`.
+///
+/// Reserves `max_size` bytes and decodes into the spare capacity of `output`,
+/// so the new bytes are not zero-filled first, except in `paranoid` and
+/// 32-bit builds. `max_size` must be >= the actual decompressed size. Returns
+/// the number of bytes appended. On error, `output` keeps its length and
+/// contents.
+#[cfg(feature = "alloc")]
+#[inline]
+pub fn decompress_append(
+    input: &[u8],
+    output: &mut Vec<u8>,
+    max_size: usize,
+) -> Result<usize, DecompressError> {
+    decompress_append_internal::<false>(input, output, max_size, b"")
 }
 
 /// Decompress all bytes of `input` into a new vec.
@@ -498,10 +611,8 @@ pub fn decompress_into(input: &[u8], output: &mut [u8]) -> Result<usize, Decompr
 #[cfg(feature = "alloc")]
 #[inline]
 pub fn decompress(input: &[u8], uncompressed_size: usize) -> Result<Vec<u8>, DecompressError> {
-    let mut decompressed: Vec<u8> = vec![0; uncompressed_size];
-    let decomp_len =
-        decompress_internal::<false, _>(input, &mut SliceSink::new(&mut decompressed, 0), b"")?;
-    decompressed.truncate(decomp_len);
+    let mut decompressed = Vec::new();
+    decompress_append(input, &mut decompressed, uncompressed_size)?;
     Ok(decompressed)
 }
 
@@ -513,7 +624,7 @@ pub fn decompress_into_with_dict(
     output: &mut [u8],
     dict: &[u8],
 ) -> Result<usize, DecompressError> {
-    decompress_internal::<true, _>(input, &mut SliceSink::new(output, 0), dict)
+    decompress_internal::<true>(input, &mut OutSink::new(out_from_init(output), 0), dict)
 }
 
 /// A block decompressor that borrows its dictionary.
@@ -550,13 +661,8 @@ impl<'a> DecompressorRef<'a> {
         input: &[u8],
         uncompressed_size: usize,
     ) -> Result<Vec<u8>, DecompressError> {
-        let mut decompressed = vec![0u8; uncompressed_size];
-        let len = decompress_internal::<true, _>(
-            input,
-            &mut SliceSink::new(&mut decompressed, 0),
-            self.dict,
-        )?;
-        decompressed.truncate(len);
+        let mut decompressed = Vec::new();
+        self.decompress_append(input, &mut decompressed, uncompressed_size)?;
         Ok(decompressed)
     }
 
@@ -566,7 +672,37 @@ impl<'a> DecompressorRef<'a> {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, DecompressError> {
-        decompress_internal::<true, _>(input, &mut SliceSink::new(output, 0), self.dict)
+        decompress_internal::<true>(
+            input,
+            &mut OutSink::new(out_from_init(output), 0),
+            self.dict,
+        )
+    }
+
+    /// Decompress `input` into uninitialized `output`, returning the
+    /// initialized prefix that holds the decompressed bytes.
+    ///
+    /// See [`decompress_into_uninit`](crate::decompress_into_uninit).
+    pub fn decompress_into_uninit<'b>(
+        &self,
+        input: &[u8],
+        output: &'b mut [MaybeUninit<u8>],
+    ) -> Result<&'b mut [u8], DecompressError> {
+        decompress_uninit::<true>(input, output, self.dict)
+    }
+
+    /// Decompress `input` and append it to `output`, returning the number of
+    /// bytes appended.
+    ///
+    /// See [`decompress_append`](crate::decompress_append).
+    #[cfg(feature = "alloc")]
+    pub fn decompress_append(
+        &self,
+        input: &[u8],
+        output: &mut Vec<u8>,
+        max_size: usize,
+    ) -> Result<usize, DecompressError> {
+        decompress_append_internal::<true>(input, output, max_size, self.dict)
     }
 }
 
@@ -632,6 +768,31 @@ impl Decompressor {
         output: &mut [u8],
     ) -> Result<usize, DecompressError> {
         DecompressorRef::with_dict(&self.dict).decompress_into(input, output)
+    }
+
+    /// Decompress `input` into uninitialized `output`, returning the
+    /// initialized prefix that holds the decompressed bytes.
+    ///
+    /// See [`decompress_into_uninit`](crate::decompress_into_uninit).
+    pub fn decompress_into_uninit<'b>(
+        &self,
+        input: &[u8],
+        output: &'b mut [MaybeUninit<u8>],
+    ) -> Result<&'b mut [u8], DecompressError> {
+        DecompressorRef::with_dict(&self.dict).decompress_into_uninit(input, output)
+    }
+
+    /// Decompress `input` and append it to `output`, returning the number of
+    /// bytes appended.
+    ///
+    /// See [`decompress_append`](crate::decompress_append).
+    pub fn decompress_append(
+        &self,
+        input: &[u8],
+        output: &mut Vec<u8>,
+        max_size: usize,
+    ) -> Result<usize, DecompressError> {
+        DecompressorRef::with_dict(&self.dict).decompress_append(input, output, max_size)
     }
 }
 
@@ -798,6 +959,7 @@ mod test {
 #[cfg(kani)]
 mod kani_proofs {
     use super::*;
+    use crate::out::{OutSink, out_from_init};
     use lz4rip_core::MINMATCH;
 
     // -- End-to-end proofs (slow path, all inputs exhaustive) --
@@ -807,8 +969,8 @@ mod kani_proofs {
     fn decompress_4byte_no_oob() {
         let input: [u8; 4] = kani::any();
         let mut output = [0u8; 16];
-        let mut sink = SliceSink::new(&mut output, 0);
-        let _ = decompress_internal::<false, _>(&input, &mut sink, b"");
+        let mut sink = OutSink::new(out_from_init(&mut output), 0);
+        let _ = decompress_internal::<false>(&input, &mut sink, b"");
     }
 
     #[kani::proof]
@@ -816,8 +978,8 @@ mod kani_proofs {
     fn decompress_6byte_no_oob() {
         let input: [u8; 6] = kani::any();
         let mut output = [0u8; 20];
-        let mut sink = SliceSink::new(&mut output, 0);
-        let _ = decompress_internal::<false, _>(&input, &mut sink, b"");
+        let mut sink = OutSink::new(out_from_init(&mut output), 0);
+        let _ = decompress_internal::<false>(&input, &mut sink, b"");
     }
 
     #[kani::proof]
@@ -826,8 +988,8 @@ mod kani_proofs {
         let input: [u8; 6] = kani::any();
         let dict: [u8; 8] = kani::any();
         let mut output = [0u8; 20];
-        let mut sink = SliceSink::new(&mut output, 0);
-        let _ = decompress_internal::<true, _>(&input, &mut sink, &dict);
+        let mut sink = OutSink::new(out_from_init(&mut output), 0);
+        let _ = decompress_internal::<true>(&input, &mut sink, &dict);
     }
 
     // -- Fast-path proofs --
@@ -902,6 +1064,7 @@ mod kani_proofs {
     fn fast_path_short_match_no_oob() {
         let input = [0u8; 40];
         let mut output = [0u8; 52];
+        let output = out_from_init(&mut output);
 
         let token_pos: usize = kani::any();
         let output_pos: usize = kani::any();
@@ -932,7 +1095,7 @@ mod kani_proofs {
         paranoid_unsafe_call!(crate::primitives::wild_copy_16(
             &input,
             input_pos,
-            &mut output,
+            output,
             &mut pos,
             literal_length
         ));
@@ -945,7 +1108,7 @@ mod kani_proofs {
 
         if offset >= 8 {
             paranoid_unsafe_call!(crate::primitives::wild_match_copy_18(
-                &mut output,
+                output,
                 start,
                 &mut pos,
                 match_length
@@ -955,14 +1118,14 @@ mod kani_proofs {
             output[pos..pos + match_length].fill(val);
         } else if match_length <= offset {
             paranoid_unsafe_call!(crate::primitives::copy_within_nonoverlap(
-                &mut output,
+                output,
                 start,
                 &mut pos,
                 match_length
             ));
         } else {
             paranoid_unsafe_call!(crate::primitives::copy_within_overlapping(
-                &mut output,
+                output,
                 start,
                 &mut pos,
                 match_length,
@@ -982,6 +1145,7 @@ mod kani_proofs {
     fn fast_path_long_match_no_oob() {
         let input = [0u8; 40];
         let mut output = [0u8; 64];
+        let output = out_from_init(&mut output);
 
         let token_pos: usize = kani::any();
         let output_pos: usize = kani::any();
@@ -1000,7 +1164,7 @@ mod kani_proofs {
         paranoid_unsafe_call!(crate::primitives::wild_copy_16(
             &input,
             input_pos,
-            &mut output,
+            output,
             &mut pos,
             literal_length
         ));
@@ -1018,28 +1182,28 @@ mod kani_proofs {
 
         if offset >= 16 && pos + match_length + 32 <= output.len() {
             paranoid_unsafe_call!(crate::primitives::wild_copy_match_32(
-                &mut output,
+                output,
                 start,
                 &mut pos,
                 match_length
             ));
         } else if offset >= 16 && pos + match_length + 16 <= output.len() {
             paranoid_unsafe_call!(crate::primitives::wild_copy_match_16(
-                &mut output,
+                output,
                 start,
                 &mut pos,
                 match_length
             ));
         } else if offset >= 8 && pos + match_length + 8 <= output.len() {
             paranoid_unsafe_call!(crate::primitives::wild_copy_match_8(
-                &mut output,
+                output,
                 start,
                 &mut pos,
                 match_length
             ));
         } else if match_length > offset {
             paranoid_unsafe_call!(crate::primitives::copy_within_overlapping(
-                &mut output,
+                output,
                 start,
                 &mut pos,
                 match_length,
@@ -1047,7 +1211,7 @@ mod kani_proofs {
             ));
         } else {
             paranoid_unsafe_call!(crate::primitives::copy_within_nonoverlap(
-                &mut output,
+                output,
                 start,
                 &mut pos,
                 match_length

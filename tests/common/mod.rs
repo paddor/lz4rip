@@ -2,7 +2,10 @@
 
 #[cfg(feature = "frame")]
 use lz4rip::frame::BlockMode;
-use lz4rip::{block::decompress, compress as compress_block};
+use lz4rip::{
+    block::{decompress, decompress_append, decompress_into_uninit},
+    compress as compress_block,
+};
 
 fn text_payload(target_bytes: usize) -> Vec<u8> {
     const SENTENCE: &[u8] =
@@ -83,6 +86,14 @@ pub fn test_roundtrip(bytes: impl AsRef<[u8]>) {
     let compressed = compress_block(bytes);
     let decompressed = decompress(&compressed, bytes.len()).unwrap();
     assert_eq!(decompressed, bytes);
+
+    let mut uninit = Vec::with_capacity(bytes.len());
+    let decompressed = decompress_into_uninit(&compressed, uninit.spare_capacity_mut()).unwrap();
+    assert_eq!(decompressed, bytes);
+
+    let mut appended = b"prefix".to_vec();
+    decompress_append(&compressed, &mut appended, bytes.len()).unwrap();
+    assert_eq!(&appended[6..], bytes);
 
     #[cfg(feature = "frame")]
     for bm in &[BlockMode::Independent, BlockMode::Linked] {

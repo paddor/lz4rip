@@ -3,8 +3,11 @@
 //! which overlap in the middle. Falls back to `memcpy` for larger sizes.
 
 /// Copy `src` into `dst` using fixed-size double-copy tricks for small sizes.
+///
+/// Generic so the decoder can copy into `MaybeUninit<u8>` output.
+/// Thresholds assume one-byte elements.
 #[inline]
-pub fn slice_copy(src: &[u8], dst: &mut [u8]) {
+pub fn slice_copy<T: Copy>(src: &[T], dst: &mut [T]) {
     #[inline(never)]
     #[cold]
     #[track_caller]
@@ -29,24 +32,24 @@ pub fn slice_copy(src: &[u8], dst: &mut [u8]) {
     }
 
     if len < 8 {
-        double_copy_trick::<4>(src, dst);
+        double_copy_trick::<T, 4>(src, dst);
         return;
     }
 
     if len <= 16 {
-        double_copy_trick::<8>(src, dst);
+        double_copy_trick::<T, 8>(src, dst);
         return;
     }
 
     if len <= 32 {
-        double_copy_trick::<16>(src, dst);
+        double_copy_trick::<T, 16>(src, dst);
         return;
     }
 
     #[cfg(target_feature = "avx")]
     {
         if len <= 64 {
-            double_copy_trick::<32>(src, dst);
+            double_copy_trick::<T, 32>(src, dst);
             return;
         }
     }
@@ -56,18 +59,18 @@ pub fn slice_copy(src: &[u8], dst: &mut [u8]) {
 
 #[allow(clippy::inline_always)]
 #[inline(always)]
-fn short_copy(src: &[u8], dst: &mut [u8]) {
+fn short_copy<T: Copy>(src: &[T], dst: &mut [T]) {
     let len = src.len();
 
     dst[0] = src[0];
     if len >= 2 {
-        double_copy_trick::<2>(src, dst);
+        double_copy_trick::<T, 2>(src, dst);
     }
 }
 
 #[allow(clippy::inline_always)]
 #[inline(always)]
-fn double_copy_trick<const SIZE: usize>(src: &[u8], dst: &mut [u8]) {
+fn double_copy_trick<T: Copy, const SIZE: usize>(src: &[T], dst: &mut [T]) {
     dst[0..SIZE].copy_from_slice(&src[0..SIZE]);
     dst[src.len() - SIZE..].copy_from_slice(&src[src.len() - SIZE..]);
 }
