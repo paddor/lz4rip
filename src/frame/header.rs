@@ -132,7 +132,7 @@ pub struct FrameInfo {
     pub(crate) dict_id: Option<u32>,
     /// The maximum uncompressed size of each data block.
     pub block_size: BlockSize,
-    /// The block mode.
+    /// Whether blocks are independent or can reference previous blocks.
     pub block_mode: BlockMode,
     /// If set, includes a checksum for each data block in the frame.
     pub block_checksums: bool,
@@ -159,7 +159,7 @@ impl FrameInfo {
         self
     }
 
-    /// The block mode.
+    /// Whether blocks are independent or can reference previous blocks.
     pub fn block_mode(mut self, block_mode: BlockMode) -> Self {
         self.block_mode = block_mode;
         self
