@@ -83,6 +83,28 @@ pub(crate) fn zero_init(output: &mut [MaybeUninit<u8>]) -> &mut [u8] {
     unsafe { &mut *(output as *mut [MaybeUninit<u8>] as *mut [u8]) }
 }
 
+/// Fills `dst` with `val` (offset-1 matches).
+///
+/// `fill` on `[MaybeUninit<u8>]` is an element loop, which LLVM lowers to
+/// `memset`. Kani cannot unwind that loop within the harness bounds, so Kani
+/// builds stub it with `write_bytes`, which is what `fill` does for `[u8]`.
+#[cfg(not(all(kani, not(any(feature = "paranoid", target_pointer_width = "32")))))]
+#[inline(always)]
+pub(crate) fn fill_out(dst: &mut [OutByte], val: OutByte) {
+    dst.fill(val);
+}
+
+/// Fills `dst` with `val` (offset-1 matches). Kani stub, see above.
+#[cfg(all(kani, not(any(feature = "paranoid", target_pointer_width = "32"))))]
+#[inline(always)]
+pub(crate) fn fill_out(dst: &mut [OutByte], val: OutByte) {
+    // SAFETY: `dst` is writable for `dst.len()` bytes, and Kani harness
+    // buffers are zero-initialized.
+    unsafe {
+        core::ptr::write_bytes(dst.as_mut_ptr().cast::<u8>(), val.assume_init(), dst.len());
+    }
+}
+
 /// Output buffer and write position for the decoder.
 ///
 /// # Invariants
@@ -138,7 +160,7 @@ impl<'a> OutSink<'a> {
         let offset = self.pos - start;
         if offset == 1 {
             let val = self.output[start];
-            self.output[self.pos..self.pos + num_bytes].fill(val);
+            fill_out(&mut self.output[self.pos..self.pos + num_bytes], val);
         } else {
             // Seed at most `num_bytes` bytes. When a dict-spanning match leaves
             // an output remainder shorter than `offset`, copying a full

@@ -12,7 +12,7 @@ use lz4rip_core::SliceSink;
 use crate::out::assume_init_prefix;
 #[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 use crate::out::zero_init;
-use crate::out::{OutSink, out_from_init};
+use crate::out::{OutSink, fill_out, out_from_init};
 
 #[cfg(feature = "alloc")]
 use alloc::vec::Vec;
@@ -259,7 +259,7 @@ pub(crate) fn decompress_internal<const USE_DICT: bool>(
                     ));
                 } else if offset == 1 {
                     let val = out[start];
-                    out[*pos..*pos + match_length].fill(val);
+                    fill_out(&mut out[*pos..*pos + match_length], val);
                     *pos += match_length;
                 } else if match_length <= offset {
                     paranoid_unsafe_call!(crate::primitives::copy_within_nonoverlap(
@@ -329,7 +329,7 @@ pub(crate) fn decompress_internal<const USE_DICT: bool>(
             } else if match_length > offset {
                 if offset == 1 {
                     let val = out[start];
-                    out[*pos..*pos + match_length].fill(val);
+                    fill_out(&mut out[*pos..*pos + match_length], val);
                     *pos += match_length;
                 } else {
                     paranoid_unsafe_call!(crate::primitives::copy_within_overlapping(
@@ -435,7 +435,7 @@ pub(crate) fn decompress_internal<const USE_DICT: bool>(
         } else if match_length > offset {
             if offset == 1 {
                 let val = out[start];
-                out[*pos..*pos + match_length].fill(val);
+                fill_out(&mut out[*pos..*pos + match_length], val);
                 *pos += match_length;
             } else {
                 paranoid_unsafe_call!(crate::primitives::copy_within_overlapping(
@@ -1115,7 +1115,7 @@ mod kani_proofs {
             ));
         } else if offset == 1 {
             let val = output[start];
-            output[pos..pos + match_length].fill(val);
+            fill_out(&mut output[pos..pos + match_length], val);
         } else if match_length <= offset {
             paranoid_unsafe_call!(crate::primitives::copy_within_nonoverlap(
                 output,
