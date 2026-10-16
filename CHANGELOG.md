@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.11.11] - 2026-10-17
+
 ### Added
 
 - `decompress_into_uninit` decodes into `&mut [MaybeUninit<u8>]` and returns
@@ -17,7 +19,14 @@
 - Paranoid builds of `lz4rip-decode` deny `unsafe_code` instead of forbidding
   it. One `unsafe` block remains, in `decompress_into_uninit`: it views the
   zero-filled caller buffer as bytes.
-- `lz4rip-core`: `slice_copy` is generic over `T: Copy`.
+- `lz4rip-core`: `slice_copy` is generic over `T: Copy`. This bumps
+  `lz4rip-core` to `0.6.0`.
+- Bump the JSR/WASM package to `0.2.17`.
+
+### Fixed
+
+- `--features nightly` builds again on nightly 1.101 and newer, which
+  stabilized `optimize_attribute`.
 
 ## [0.11.10] - 2026-09-27
 
