@@ -6,6 +6,9 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(feature = "nightly", allow(internal_features))]
 #![cfg_attr(feature = "nightly", feature(core_intrinsics))]
+// `optimize_attribute` is stable since 1.101. The gate keeps older nightlies
+// working.
+#![cfg_attr(feature = "nightly", allow(stable_features))]
 #![cfg_attr(feature = "nightly", feature(optimize_attribute))]
 // Paranoid and 32-bit builds deny unsafe code. The one exception,
 // `out::zero_init`, views a zero-filled uninitialized buffer as bytes.
