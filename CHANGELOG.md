@@ -2,14 +2,23 @@
 
 ## [Unreleased]
 
+## [0.11.12] - 2026-10-19
+
 ### Changed
 
+- The decoder is safe code in every build. `lz4rip-decode` keeps `unsafe` only
+  at the uninitialized-output boundary: layout views between `[u8]` and
+  `[MaybeUninit<u8>]`, and the `decompress_into_uninit` and
+  `decompress_append` entry points. `paranoid` now only makes it decode into
+  `[u8]`. Against the former unchecked decoder: 10-26% faster on JSON and text
+  messages of 256 B to 4 KiB, and 1.6% slower on the Silesia corpus.
 - Dict compression is faster on small inputs, with byte-identical output:
   35-40% at 128-256 B, 20% at 512 B, 12% at 1 KB, and 3% at 2-16 KB on a
   stream of different messages. `DictCompressor` and `DictCompressorRef` reuse
   their main table across calls for inputs up to 1 KB instead of clearing it,
   and the dict probe skips checks the dict + input < 64 KB bound already
   covers.
+- Bump the JSR/WASM package to `0.2.18`.
 
 ## [0.11.11] - 2026-10-17
 
