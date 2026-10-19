@@ -54,6 +54,11 @@ const _: () = assert!(WIDE_CHUNK <= SHORT_MATCH_MAX);
 /// formula, so Kani builds drop them. The general-path copy proofs cover
 /// them.
 const WIDE_COPIES: bool = !cfg!(kani);
+/// Longest literal run the general path copies in `LONG_CHUNK` steps. Longer
+/// runs take one exact copy (`memcpy`), whose wider stores keep the store
+/// buffer from filling. The inline loop made 64 KiB blocks of mostly
+/// incompressible data 16-40% slower.
+const WILD_LITERAL_MAX: usize = 256;
 
 /// Read a variable-length integer in the LZ4 encoding.
 #[inline]
@@ -444,6 +449,7 @@ fn decompress_body<const USE_DICT: bool>(
             }
             let (out, pos) = output.output_mut_with_pos();
             if WIDE_COPIES
+                && literal_length <= WILD_LITERAL_MAX
                 && has_headroom(input_pos, literal_length, LONG_CHUNK, input.len())
                 && has_headroom(*pos, literal_length, LONG_CHUNK, out.len())
             {
