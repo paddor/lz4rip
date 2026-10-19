@@ -35,14 +35,12 @@ fn dict_roundtrip(corpus: &[u8], dict_bytes: usize) {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn generated_json_dict_4k() {
     let corpus = json_payload(66_675);
     dict_roundtrip(&corpus, 4096);
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn generated_json_dict_64k() {
     let corpus = json_payload(132_000);
     dict_roundtrip(&corpus, 65536);
@@ -102,7 +100,7 @@ fn dict_trainer_produces_usable_dict() {
     assert_eq!(&decompressed[..], input);
 }
 
-// ---- Adversarial dict tests (all miri-friendly) ----
+// ---- Adversarial dict tests ----
 
 fn dict_roundtrip_ref(dict: &[u8], input: &[u8]) {
     let mut comp = DictCompressorRef::new(dict);
@@ -272,7 +270,6 @@ fn dict_repetitive_input_varied() {
 /// Dict + input near the u16 boundary (dict 32K, input 32K).
 /// Exercises the fallback from dual HashTableU32U16 to single HashTableU32.
 #[test]
-#[cfg_attr(miri, ignore)]
 fn dict_u16_boundary() {
     let dict: Vec<u8> = (0u8..=255).cycle().take(32768).collect();
     let input: Vec<u8> = (0u8..=255).cycle().take(32768).collect();

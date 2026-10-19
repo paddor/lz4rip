@@ -20,9 +20,7 @@
 use std::{fmt, io};
 
 pub(crate) mod compress;
-#[forbid(unsafe_code)]
 pub(crate) mod decompress;
-#[forbid(unsafe_code)]
 pub(crate) mod header;
 
 pub use compress::{AutoFinishEncoder, FrameEncoder};

@@ -4,7 +4,6 @@ use core::fmt;
 
 use crate::hashtable::HashTable;
 use crate::hashtable::{count_same_bytes, first4, rd32, rd64, rd64_upto};
-use crate::verified_sink::VerifiedSliceSink;
 #[cfg(feature = "alloc")]
 use alloc::vec;
 use lz4rip_core::CompressError;
@@ -14,6 +13,7 @@ use lz4rip_core::MAX_DISTANCE;
 use lz4rip_core::MFLIMIT;
 use lz4rip_core::MINMATCH;
 use lz4rip_core::Sink;
+use lz4rip_core::SliceSink;
 use lz4rip_core::WINDOW_SIZE;
 use lz4rip_core::slice_copy;
 
@@ -716,7 +716,7 @@ pub const fn get_maximum_output_size(input_len: usize) -> usize {
 /// Returns the number of bytes written (compressed) into `output`.
 #[inline]
 pub fn compress_into(input: &[u8], output: &mut [u8]) -> Result<usize, CompressError> {
-    compress_into_sink_with_dict::<false>(input, &mut VerifiedSliceSink::new(output, 0), b"")
+    compress_into_sink_with_dict::<false>(input, &mut SliceSink::new(output, 0), b"")
 }
 
 /// Compress all bytes of `input` into `output` using an external dictionary.
@@ -728,7 +728,7 @@ pub fn compress_into_with_dict(
     output: &mut [u8],
     dict: &[u8],
 ) -> Result<usize, CompressError> {
-    compress_into_sink_with_dict::<true>(input, &mut VerifiedSliceSink::new(output, 0), dict)
+    compress_into_sink_with_dict::<true>(input, &mut SliceSink::new(output, 0), dict)
 }
 
 /// Compress all bytes of `input`.
@@ -738,12 +738,9 @@ pub fn compress_into_with_dict(
 pub fn compress(input: &[u8]) -> Vec<u8> {
     let max_compressed_size = get_maximum_output_size(input.len());
     let mut compressed: Vec<u8> = vec![0u8; max_compressed_size];
-    let compressed_len = compress_into_sink_with_dict::<false>(
-        input,
-        &mut VerifiedSliceSink::new(&mut compressed, 0),
-        b"",
-    )
-    .unwrap();
+    let compressed_len =
+        compress_into_sink_with_dict::<false>(input, &mut SliceSink::new(&mut compressed, 0), b"")
+            .unwrap();
     compressed.truncate(compressed_len);
 
     compressed
@@ -925,7 +922,7 @@ pub(crate) fn compress_dict_tables<const N: usize>(
         compress_internal::<_, true, true, true, true, _>(
             input,
             0,
-            &mut VerifiedSliceSink::new(output, 0),
+            &mut SliceSink::new(output, 0),
             pristine,
             dict,
             dict.len(),
@@ -943,7 +940,7 @@ pub(crate) fn compress_dict_tables<const N: usize>(
         *main_base += input.len();
         compress_with_dict_table(
             input,
-            &mut VerifiedSliceSink::new(output, 0),
+            &mut SliceSink::new(output, 0),
             table,
             pristine,
             dict,
@@ -960,7 +957,7 @@ pub(crate) fn compress_dict_tables<const N: usize>(
         compress_internal::<_, true, true, false, false, _>(
             input,
             0,
-            &mut VerifiedSliceSink::new(output, 0),
+            &mut SliceSink::new(output, 0),
             &mut u32_table,
             dict_data,
             dict_data.len(),
@@ -983,7 +980,7 @@ pub(crate) fn compress_plain_table<const N: usize>(
         compress_internal::<_, false, true, false, true, _>(
             input,
             0,
-            &mut VerifiedSliceSink::new(output, 0),
+            &mut SliceSink::new(output, 0),
             table,
             b"",
             offset,
@@ -992,7 +989,7 @@ pub(crate) fn compress_plain_table<const N: usize>(
         compress_internal::<_, false, false, false, true, _>(
             input,
             0,
-            &mut VerifiedSliceSink::new(output, 0),
+            &mut SliceSink::new(output, 0),
             table,
             b"",
             0,
@@ -1001,7 +998,7 @@ pub(crate) fn compress_plain_table<const N: usize>(
         compress_internal::<_, false, false, false, false, _>(
             input,
             0,
-            &mut VerifiedSliceSink::new(output, 0),
+            &mut SliceSink::new(output, 0),
             table,
             b"",
             0,
@@ -1043,64 +1040,6 @@ impl<const N: usize> Default for CompressorRefN<N> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn count_same_bytes(input: &[u8], cur: &mut usize, source: &[u8], candidate: usize) -> usize {
-        const USIZE_SIZE: usize = core::mem::size_of::<usize>();
-        let cur_slice = &input[*cur..input.len() - END_OFFSET];
-        let cand_slice = &source[candidate..];
-
-        let mut num = 0;
-        for (block1, block2) in cur_slice
-            .chunks_exact(USIZE_SIZE)
-            .zip(cand_slice.chunks_exact(USIZE_SIZE))
-        {
-            let input_block = usize::from_ne_bytes(block1.try_into().unwrap());
-            let match_block = usize::from_ne_bytes(block2.try_into().unwrap());
-
-            if input_block == match_block {
-                num += USIZE_SIZE;
-            } else {
-                let diff = input_block ^ match_block;
-                num += (diff.to_le().trailing_zeros() / 8) as usize;
-                *cur += num;
-                return num;
-            }
-        }
-
-        #[cold]
-        fn count_same_bytes_tail(a: &[u8], b: &[u8], offset: usize) -> usize {
-            a.iter()
-                .zip(b)
-                .skip(offset)
-                .take_while(|(a, b)| a == b)
-                .count()
-        }
-        num += count_same_bytes_tail(cur_slice, cand_slice, num);
-
-        *cur += num;
-        num
-    }
-
-    #[test]
-    fn test_count_same_bytes() {
-        let first: &[u8] = &[
-            1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        ];
-        let second: &[u8] = &[
-            1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-        ];
-        assert_eq!(count_same_bytes(first, &mut 0, second, 0), 16);
-
-        for diff_idx in 8..100 {
-            let first: Vec<u8> = (0u8..255).cycle().take(100 + 12).collect();
-            let mut second = first.clone();
-            second[diff_idx] = 255;
-            for start in 0..=diff_idx {
-                let same_bytes = count_same_bytes(&first, &mut start.clone(), &second, start);
-                assert_eq!(same_bytes, diff_idx - start);
-            }
-        }
-    }
 
     #[test]
     fn test_bug() {

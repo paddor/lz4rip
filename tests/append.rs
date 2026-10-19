@@ -1,8 +1,6 @@
-use std::mem::MaybeUninit;
-
 use lz4rip::block::{
     DecompressError, Decompressor, DecompressorRef, DictCompressor, compress, decompress_append,
-    decompress_into, decompress_into_uninit,
+    decompress_into,
 };
 
 /// Mixes literal runs, runs with periods 1 to 20, and copies of earlier
@@ -43,23 +41,15 @@ fn mixed_payload(len: usize, seed: u64) -> Vec<u8> {
     out
 }
 
-fn uninit_buf(len: usize) -> Vec<MaybeUninit<u8>> {
-    vec![MaybeUninit::uninit(); len]
-}
-
 fn check_block(data: &[u8]) {
     let compressed = compress(data);
 
     // Exact size takes the slow tail paths; slack takes the wildcopy paths.
     for slack in [0, 64] {
-        let mut buf = uninit_buf(data.len() + slack);
-        let out = decompress_into_uninit(&compressed, &mut buf).unwrap();
-        assert_eq!(out, data);
+        let mut buf = vec![0u8; data.len() + slack];
+        let n = decompress_into(&compressed, &mut buf).unwrap();
+        assert_eq!(&buf[..n], data);
     }
-
-    let mut spare = Vec::with_capacity(data.len());
-    let out = decompress_into_uninit(&compressed, spare.spare_capacity_mut()).unwrap();
-    assert_eq!(out, data);
 
     let mut appended = b"prefix".to_vec();
     let n = decompress_append(&compressed, &mut appended, data.len()).unwrap();
@@ -69,15 +59,14 @@ fn check_block(data: &[u8]) {
 }
 
 #[test]
-fn uninit_and_append_match_input() {
+fn into_and_append_match_input() {
     for (i, len) in [0, 1, 15, 16, 64, 300, 1000, 5000].into_iter().enumerate() {
         check_block(&mixed_payload(len, i as u64 + 1));
     }
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
-fn uninit_and_append_match_input_large() {
+fn into_and_append_match_input_large() {
     check_block(&mixed_payload(70_000, 7));
 }
 
@@ -124,7 +113,7 @@ fn append_does_not_reference_existing_bytes() {
 }
 
 #[test]
-fn uninit_errors_match_init() {
+fn append_errors_match_into() {
     let data = mixed_payload(1000, 4);
     let compressed = compress(&data);
     for (input, cap) in [
@@ -134,13 +123,14 @@ fn uninit_errors_match_init() {
         (&[0x10][..], 16),
     ] {
         let expected = decompress_into(input, &mut vec![0u8; cap]).unwrap_err();
-        let mut buf = uninit_buf(cap);
-        assert_eq!(decompress_into_uninit(input, &mut buf), Err(expected));
+        let mut out = b"prefix".to_vec();
+        assert_eq!(decompress_append(input, &mut out, cap), Err(expected));
+        assert_eq!(out, b"prefix");
     }
 }
 
 #[test]
-fn dict_uninit_and_append_match_input() {
+fn dict_into_and_append_match_input() {
     let corpus = mixed_payload(6000, 5);
     let (dict, input) = corpus.split_at(2048);
     // Starts with dictionary content, so early matches reach into the dict.
@@ -150,18 +140,18 @@ fn dict_uninit_and_append_match_input() {
     let owned = Decompressor::with_dict(dict);
     let borrowed = DecompressorRef::with_dict(dict);
 
-    let mut buf = uninit_buf(input.len());
+    let mut buf = vec![0u8; input.len()];
     assert_eq!(
-        owned.decompress_into_uninit(&compressed, &mut buf).unwrap(),
-        input
+        owned.decompress_into(&compressed, &mut buf),
+        Ok(input.len())
     );
-    let mut buf = uninit_buf(input.len() + 64);
+    assert_eq!(buf, input);
+    let mut buf = vec![0u8; input.len() + 64];
     assert_eq!(
-        borrowed
-            .decompress_into_uninit(&compressed, &mut buf)
-            .unwrap(),
-        input
+        borrowed.decompress_into(&compressed, &mut buf),
+        Ok(input.len())
     );
+    assert_eq!(&buf[..input.len()], input);
 
     let mut out = b"prefix".to_vec();
     assert_eq!(

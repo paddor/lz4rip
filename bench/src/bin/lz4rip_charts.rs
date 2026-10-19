@@ -32,7 +32,6 @@ const INCOMPRESSIBLE: &[&str] = &["mr", "sao", "x-ray"];
 const MAIN_CODEC_ORDER: &[&str] = &[
     "C lz4",
     "lz4rip",
-    "lz4rip paranoid",
     "lz4_flex unsafe",
     "lz4_flex",
 ];
@@ -46,7 +45,6 @@ const SMALL_ENCODE_CODEC_ORDER: &[&str] = &["C lz4", "lz4rip", "lz4_flex unsafe"
 const SMALL_DECODE_CODEC_ORDER: &[&str] = &[
     "C lz4",
     "lz4rip",
-    "lz4rip paranoid",
     "lz4_flex unsafe",
     "lz4_flex",
 ];
@@ -221,12 +219,6 @@ impl Config {
             styles: vec![
                 codec("C lz4", "lz4 (C)", 0x60a5fa, 0x4680c4),
                 codec("lz4rip", "lz4rip (safe)", 0xf87171, 0xc45050),
-                codec(
-                    "lz4rip paranoid",
-                    "lz4rip paranoid (safe)",
-                    0xf472b6,
-                    0xc05a92,
-                ),
                 codec("lz4_flex unsafe", "lz4_flex (unsafe)", 0xf59e0b, 0xc47d08),
                 codec("lz4_flex", "lz4_flex (safe)", 0x4ade80, 0x3aaf60),
                 codec("C lz4 (dict 2K)", "lz4 (C, dict)", 0x60a5fa, 0x4680c4),

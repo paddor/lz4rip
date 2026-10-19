@@ -18,7 +18,6 @@ mod compressor;
 #[cfg(feature = "alloc")]
 mod dict;
 pub(crate) mod hashtable;
-mod verified_sink;
 
 #[cfg(feature = "alloc")]
 pub use compress::compress;
@@ -44,9 +43,8 @@ pub use hashtable::HashTableU32;
 ///
 /// This is cross-crate plumbing for the frame encoder. The table must belong
 /// to the logical compression stream described by `input`, `input_pos`,
-/// `ext_dict`, and `input_stream_offset`, or matches are lost. A table from
-/// another stream cannot cause undefined behavior: every read is
-/// bounds-checked, and every match is verified against the input bytes.
+/// `ext_dict`, and `input_stream_offset`. A table from another stream reads
+/// only inside the buffers, but can produce invalid output.
 #[doc(hidden)]
 pub fn compress_into_sink_with_table<
     const USE_DICT: bool,

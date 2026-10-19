@@ -1,38 +1,26 @@
 # Safety
 
-## Unsafe boundary
+## No unsafe
 
-The `lz4rip` facade exposes safe compression and decompression APIs. The default
-build isolates unsafe code to 14 blocks in 5 modules across 3 crates. The
-encoder's blocks perform unchecked reads or writes whose bounds are proven by
-margins computed in the algorithm code. Decoding is safe code; the decoder's
-blocks only let it write into uninitialized memory.
+All four crates (`lz4rip`, `lz4rip-core`, `lz4rip-encode`, `lz4rip-decode`)
+are `#![forbid(unsafe_code)]`. No `unsafe` is exposed in the public API.
 
-The internal hash-table trait and generic decompression entry point are not
-exported, so downstream safe code cannot construct invalid match candidates for
-unchecked encoder reads or supply a custom `Sink` whose capacity lies to the
-decoder. See [DESIGN.md](DESIGN.md) for the unsafe-site inventory,
-frame-compression table invariants, and how the decoder's bounds checks compile
-away.
+The hot loops keep most bounds checks out by construction. The match finder
+reads a candidate only under a test the compiler can see bounds the read, and
+the hash tables are indexed by masked hashes. Compressed output goes through a
+shrinking slice: one length test covers a whole short sequence. The match
+counter compares two slices cut to one length. If a match finder invariant
+broke, a read would hit the wrong bytes or panic, never leave the input; every
+match is verified against the input bytes, so the output stays valid. The
+decoder copies fixed-size chunks with one length check each. See
+[DESIGN.md](DESIGN.md) for how the checks compile away.
 
-## Paranoid build
+`decompress_append` and the `Vec`-returning `decompress` zero-fill the new
+bytes before decoding into them.
 
-The `paranoid` feature replaces each unchecked encoder memory op with a safe
-twin (bounds-checked indexing, `copy_from_slice`, `from_ne_bytes` reads,
-`chunks_exact` match counting) with the same signature, so callers are
-unchanged. The decoder runs the same safe code in both builds; `paranoid` only
-makes it decode into initialized `[u8]` instead of `[MaybeUninit<u8>]`.
-`lz4rip-core`, `lz4rip-encode`, and the frame module compile with
-`forbid(unsafe_code)`. `lz4rip-decode` compiles with `deny(unsafe_code)` and one
-exception: `decompress_into_uninit` zero-fills the caller's uninitialized buffer,
-then views it as `[u8]`. Stable Rust has no safe way to make that view. The block
-runs only when `decompress_into_uninit` is called. `decompress_append` uses
-`Vec::resize` instead and needs no `unsafe`.
-
-This is for users and policies that minimize `unsafe`. It trades a small amount
-of throughput for the guarantee; the default build keeps the isolated-unsafe
-design above. The two builds are byte-for-byte compatible: output of one
-decompresses with the other.
+The `paranoid` feature has no effect today. It stays so existing feature
+lists keep building, and as a guarantee: if a later release adds `unsafe`
+code for speed, builds with `paranoid` leave it out.
 
 ## Why Rust matters here
 

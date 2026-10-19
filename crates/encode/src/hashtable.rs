@@ -42,11 +42,9 @@ fn count_same_bytes_long(a: &[u8], b: &[u8]) -> usize {
     let (a, b) = (&a[..n], &b[..n]);
 
     let mut num = 0;
-    let (ca, cb) = (a.chunks_exact(8), b.chunks_exact(8));
-    let (mut ra, mut rb) = (ca.remainder(), cb.remainder());
-    for (x, y) in ca.zip(cb) {
-        let diff =
-            u64::from_ne_bytes(x.try_into().unwrap()) ^ u64::from_ne_bytes(y.try_into().unwrap());
+    let ((ca, mut ra), (cb, mut rb)) = (a.as_chunks::<8>(), b.as_chunks::<8>());
+    for (x, y) in ca.iter().zip(cb) {
+        let diff = u64::from_ne_bytes(*x) ^ u64::from_ne_bytes(*y);
         if diff != 0 {
             return num + (diff.to_le().trailing_zeros() / 8) as usize;
         }
@@ -61,16 +59,16 @@ fn count_same_bytes_long(a: &[u8], b: &[u8]) -> usize {
         num += 4;
         (ra, rb) = (&ra[4..], &rb[4..]);
     }
-    if let (Some(x), Some(y)) = (ra.first_chunk::<2>(), rb.first_chunk::<2>()) {
-        if x == y {
-            num += 2;
-            (ra, rb) = (&ra[2..], &rb[2..]);
-        }
+    if let (Some(x), Some(y)) = (ra.first_chunk::<2>(), rb.first_chunk::<2>())
+        && x == y
+    {
+        num += 2;
+        (ra, rb) = (&ra[2..], &rb[2..]);
     }
-    if let (Some(x), Some(y)) = (ra.first(), rb.first()) {
-        if x == y {
-            num += 1;
-        }
+    if let (Some(x), Some(y)) = (ra.first(), rb.first())
+        && x == y
+    {
+        num += 1;
     }
     num
 }

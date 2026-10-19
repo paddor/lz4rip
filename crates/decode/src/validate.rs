@@ -210,37 +210,3 @@ mod tests {
         );
     }
 }
-
-#[cfg(kani)]
-mod kani_proofs {
-    use super::*;
-
-    #[kani::proof]
-    fn decoded_advance_is_checked_and_bounded() {
-        let decoded_pos: usize = kani::any();
-        let length: usize = kani::any();
-        let expected: usize = kani::any();
-
-        if let Ok(actual) = advance_decoded(decoded_pos, length, expected) {
-            assert_eq!(decoded_pos.checked_add(length), Some(actual));
-            assert!(actual <= expected);
-        }
-    }
-
-    #[kani::proof]
-    #[kani::unwind(7)]
-    fn validate_4byte_no_overflow() {
-        let input: [u8; 4] = kani::any();
-        let expected: u8 = kani::any();
-        let _ = validate_block(&input, expected as usize);
-    }
-
-    #[kani::proof]
-    #[kani::unwind(7)]
-    fn validate_dict_4byte_no_overflow() {
-        let input: [u8; 4] = kani::any();
-        let expected: u8 = kani::any();
-        let dict: [u8; 4] = kani::any();
-        let _ = validate_block_with_dict(&input, expected as usize, &dict);
-    }
-}

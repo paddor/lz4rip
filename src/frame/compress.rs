@@ -204,13 +204,13 @@ impl<W: io::Write> FrameEncoder<W> {
 
     fn end_frame(&mut self) -> Result<(), Error> {
         debug_assert!(self.is_frame_open);
-        if let Some(expected) = self.frame_info.content_size {
-            if expected != self.content_len {
-                return Err(Error::ContentLengthError {
-                    expected,
-                    actual: self.content_len,
-                });
-            }
+        if let Some(expected) = self.frame_info.content_size
+            && expected != self.content_len
+        {
+            return Err(Error::ContentLengthError {
+                expected,
+                actual: self.content_len,
+            });
         }
 
         let mut block_info_buffer = [0u8; BLOCK_INFO_SIZE];

@@ -3,7 +3,7 @@ name = "lz4rip-encode"
 description = "LZ4 block compression for lz4rip."
 version = "0.10.10"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/paddor/lz4rip"
 readme = "README.md"
@@ -13,7 +13,8 @@ default = ["std"]
 alloc = []
 std = ["alloc", "lz4rip-core/std"]
 nightly = ["lz4rip-core/nightly"]
-# Pure safe Rust: forbid all unsafe, swap unchecked ops for safe twins.
+# No effect today: every build is safe Rust. Kept so existing feature lists
+# build, and to keep any future `unsafe` out of builds that enable it.
 paranoid = ["lz4rip-core/paranoid"]
 
 [dependencies]

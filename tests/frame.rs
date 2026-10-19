@@ -234,7 +234,6 @@ fn concatenated_respects_total_limit() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn checksums() {
     for &input in &[compression34k(), compression66json()] {
         // Block checksum
@@ -268,7 +267,6 @@ fn checksums() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn block_size() {
     let mut last_compressed_len = usize::MAX;
     for block_size in &[
@@ -537,7 +535,6 @@ fn try_finish_idempotent() {
 
 /// BlockSize::Auto resolves to a concrete size based on the first write.
 #[test]
-#[cfg_attr(miri, ignore)]
 fn block_size_auto_resolution() {
     use lz4rip::frame::{BlockSize, FrameDecoder, FrameEncoder, FrameInfo};
 

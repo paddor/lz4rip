@@ -17,7 +17,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        toolchain: [stable, "1.85"]
+        toolchain: [stable, "1.89"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -26,13 +26,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --lib --tests
       - run: cargo test --lib --tests --no-default-features --features frame -p lz4rip
-      - run: cargo test --lib --tests --features paranoid -p lz4rip
-      - run: cargo test --lib --tests --no-default-features --features "frame,paranoid" -p lz4rip
       - run: cargo check --no-default-features -p lz4rip-encode
       - run: cargo check --no-default-features -p lz4rip-decode
       - run: cargo check --no-default-features -p lz4rip
-      - run: cargo check --no-default-features --features paranoid -p lz4rip
-      - run: cargo check --no-default-features --features paranoid -p lz4rip-encode
       - run: cargo test --example perf_verify
 
   nightly:
@@ -74,8 +70,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo +nightly fmt --all -- --check
       - run: cargo +nightly clippy --lib --tests --examples
-      - run: cargo +nightly clippy --lib --tests --examples --features paranoid
-      - run: cargo +nightly clippy --no-default-features --features paranoid -p lz4rip
+      - run: cargo +nightly clippy --no-default-features -p lz4rip
 
   ci-success:
     name: CI success

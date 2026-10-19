@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed
+
+- No `unsafe` code: the crate is `#![forbid(unsafe_code)]`. Reads, the match
+  counter, and output writes are safe code, and the output is byte-identical.
+  Compression time against 0.10.10: Silesia corpus 0.7% slower, rotating
+  2-64 KiB slices 1.5-3% faster, 128 KiB-1 MiB 2.7% slower, 512 B-1 KiB 7-9%
+  slower, repeated 512 B-4 KiB messages with a dictionary 5-6.5% slower.
+- The doc-hidden `compress_into_sink_with_table` is a safe `fn`.
+- The `paranoid` feature has no effect.
+- MSRV is 1.89.
+
 ## [0.10.10] - 2026-10-19
 
 ### Changed

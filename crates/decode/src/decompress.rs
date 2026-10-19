@@ -1,15 +1,13 @@
 //! LZ4 block decompression.
 
 use core::fmt;
-use core::mem::MaybeUninit;
 
 use lz4rip_core::DecompressError;
 use lz4rip_core::MINMATCH;
 use lz4rip_core::Sink;
 use lz4rip_core::SliceSink;
 
-use crate::out::zero_init;
-use crate::out::{OutByte, OutSink, fill_out, out_array, out_from_init};
+use crate::out::OutSink;
 use crate::primitives::{LONG_CHUNK, MATCH_CHUNK, MIN_COPY_OFFSET, WIDE_CHUNK, idx};
 
 #[cfg(feature = "alloc")]
@@ -43,14 +41,6 @@ const _: () = assert!(WIDE_CHUNK >= SHORT_LITERAL_MAX);
 const _: () = assert!(TOKEN_LEN + WIDE_CHUNK <= FAST_IN);
 const _: () = assert!(WIDE_CHUNK <= SHORT_MATCH_MAX);
 
-/// Whether the general path takes its wide copies: the literal wildcopy and
-/// the `offset >= WIDE_CHUNK` match copies. They need `LONG_CHUNK` bytes of
-/// input headroom or an output of more than `2 * WIDE_CHUNK` bytes, so the
-/// end-to-end Kani proofs, with their small buffers, never reach them. CBMC
-/// still encodes them in every unrolled iteration, which triples the
-/// formula, so Kani builds drop them. The general-path copy proofs cover
-/// them.
-const WIDE_COPIES: bool = !cfg!(kani);
 /// Longest literal run the general path copies in `LONG_CHUNK` steps. Longer
 /// runs take one exact copy (`memcpy`), whose wider stores keep the store
 /// buffer from filling. The inline loop made 64 KiB blocks of mostly
@@ -221,7 +211,7 @@ pub(crate) fn decompress_internal<const USE_DICT: bool>(
 #[inline(never)]
 fn decompress_loop<const USE_DICT: bool>(
     input: &[u8],
-    out: &mut [OutByte],
+    out: &mut [u8],
     pos: &mut usize,
     ext_dict: &[u8],
 ) -> Result<usize, DecompressError> {
@@ -249,11 +239,6 @@ fn decompress_body<const USE_DICT: bool>(
     // The fast loop indexes with 32-bit positions (`idx`), so it runs only
     // on buffers below 4 GiB. Larger buffers decode on the general path.
     let fast = input.len() <= u32::MAX as usize && output.capacity() <= u32::MAX as usize;
-    // Inputs shorter than `FAST_IN` leave the fast loop at its first test.
-    // Kani cannot see that (the position is symbolic) and would explore the
-    // whole loop in the end-to-end proofs, so Kani builds skip it up front.
-    #[cfg(kani)]
-    let fast = fast && input.len() >= FAST_IN;
 
     loop {
         // Fast loop: decodes tokens whose literal and match lengths need at
@@ -373,9 +358,7 @@ fn decompress_body<const USE_DICT: bool>(
                         crate::primitives::store(
                             out,
                             op,
-                            out_array(*crate::primitives::chunk::<u8, WIDE_CHUNK>(
-                                window, TOKEN_LEN,
-                            )),
+                            *crate::primitives::chunk::<u8, WIDE_CHUNK>(window, TOKEN_LEN),
                         );
                         let mut end = dst;
                         crate::primitives::wild_match_copy_18(out, &mut end, offset, match_length);
@@ -390,13 +373,11 @@ fn decompress_body<const USE_DICT: bool>(
                             crate::primitives::store(
                                 out,
                                 op,
-                                out_array(*crate::primitives::chunk::<u8, WIDE_CHUNK>(
-                                    window, TOKEN_LEN,
-                                )),
+                                *crate::primitives::chunk::<u8, WIDE_CHUNK>(window, TOKEN_LEN),
                             );
                             let from: &[u8; SHORT_MATCH_MAX] =
                                 crate::primitives::chunk(ext_dict, ext_dict.len() - back);
-                            crate::primitives::store(out, dst, out_array(*from));
+                            crate::primitives::store(out, dst, *from);
                             *pos = dst + match_length;
                             input_pos = ip + TOKEN_LEN + OFFSET_LEN + literal_length;
                             continue;
@@ -417,9 +398,7 @@ fn decompress_body<const USE_DICT: bool>(
                 crate::primitives::store(
                     out,
                     op,
-                    out_array(*crate::primitives::chunk::<u8, WIDE_CHUNK>(
-                        window, TOKEN_LEN,
-                    )),
+                    *crate::primitives::chunk::<u8, WIDE_CHUNK>(window, TOKEN_LEN),
                 );
                 crate::primitives::wild_copy_match_long(out, dst, offset, match_length);
                 *pos = dst + match_length;
@@ -445,8 +424,7 @@ fn decompress_body<const USE_DICT: bool>(
                 });
             }
             let (out, pos) = output.output_mut_with_pos();
-            if WIDE_COPIES
-                && literal_length <= WILD_LITERAL_MAX
+            if literal_length <= WILD_LITERAL_MAX
                 && has_headroom(input_pos, literal_length, LONG_CHUNK, input.len())
                 && has_headroom(*pos, literal_length, LONG_CHUNK, out.len())
             {
@@ -483,15 +461,9 @@ fn decompress_body<const USE_DICT: bool>(
         if did_overflow {
             return Err(DecompressError::OffsetOutOfBounds);
         }
-        if WIDE_COPIES
-            && offset >= WIDE_CHUNK
-            && has_headroom(*pos, match_length, LONG_CHUNK, out.len())
-        {
+        if offset >= WIDE_CHUNK && has_headroom(*pos, match_length, LONG_CHUNK, out.len()) {
             crate::primitives::wild_copy_match_32(out, start, pos, match_length);
-        } else if WIDE_COPIES
-            && offset >= WIDE_CHUNK
-            && has_headroom(*pos, match_length, WIDE_CHUNK, out.len())
-        {
+        } else if offset >= WIDE_CHUNK && has_headroom(*pos, match_length, WIDE_CHUNK, out.len()) {
             crate::primitives::wild_copy_match_16(out, start, pos, match_length);
         } else if offset >= MATCH_CHUNK && has_headroom(*pos, match_length, MATCH_CHUNK, out.len())
         {
@@ -503,7 +475,7 @@ fn decompress_body<const USE_DICT: bool>(
         } else if match_length > offset {
             if offset < MIN_COPY_OFFSET {
                 let val = out[start];
-                fill_out(&mut out[*pos..*pos + match_length], val);
+                out[*pos..*pos + match_length].fill(val);
                 *pos += match_length;
             } else {
                 crate::primitives::copy_within_overlapping(out, start, pos, match_length, offset);
@@ -527,7 +499,7 @@ pub fn decompress_into_sink_with_dict<const USE_DICT: bool>(
     ext_dict: &[u8],
 ) -> Result<usize, DecompressError> {
     let (out, pos) = output.output_mut_with_pos();
-    let mut sink = OutSink::new(out_from_init(out), *pos);
+    let mut sink = OutSink::new(out, *pos);
     let result = decompress_internal::<USE_DICT>(input, &mut sink, ext_dict);
     *pos = sink.pos();
     result
@@ -549,18 +521,6 @@ fn copy_from_dict(
     let ext_match = &ext_dict[dict_offset..dict_offset + dict_match_length];
     output.extend_from_slice(ext_match);
     Ok(dict_match_length)
-}
-
-/// Decompress into uninitialized `output` and return its initialized prefix.
-#[inline]
-fn decompress_uninit<'a, const USE_DICT: bool>(
-    input: &[u8],
-    output: &'a mut [MaybeUninit<u8>],
-    ext_dict: &[u8],
-) -> Result<&'a mut [u8], DecompressError> {
-    let output = zero_init(output);
-    let len = decompress_internal::<USE_DICT>(input, &mut OutSink::new(output, 0), ext_dict)?;
-    Ok(&mut output[..len])
 }
 
 /// Decompress into zero-filled new bytes of `output`, then truncate.
@@ -588,20 +548,7 @@ fn decompress_append_internal<const USE_DICT: bool>(
 /// `output` should be preallocated with a size of the uncompressed data.
 #[inline]
 pub fn decompress_into(input: &[u8], output: &mut [u8]) -> Result<usize, DecompressError> {
-    decompress_internal::<false>(input, &mut OutSink::new(out_from_init(output), 0), b"")
-}
-
-/// Decompress all bytes of `input` into uninitialized `output`.
-///
-/// Returns the initialized prefix of `output` that holds the decompressed
-/// bytes. `output` should be at least the size of the uncompressed data.
-/// The buffer is zero-filled first.
-#[inline]
-pub fn decompress_into_uninit<'a>(
-    input: &[u8],
-    output: &'a mut [MaybeUninit<u8>],
-) -> Result<&'a mut [u8], DecompressError> {
-    decompress_uninit::<false>(input, output, b"")
+    decompress_internal::<false>(input, &mut OutSink::new(output, 0), b"")
 }
 
 /// Decompress all bytes of `input` and append them to `output`.
@@ -639,7 +586,7 @@ pub fn decompress_into_with_dict(
     output: &mut [u8],
     dict: &[u8],
 ) -> Result<usize, DecompressError> {
-    decompress_internal::<true>(input, &mut OutSink::new(out_from_init(output), 0), dict)
+    decompress_internal::<true>(input, &mut OutSink::new(output, 0), dict)
 }
 
 /// A block decompressor that borrows its dictionary.
@@ -687,23 +634,7 @@ impl<'a> DecompressorRef<'a> {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, DecompressError> {
-        decompress_internal::<true>(
-            input,
-            &mut OutSink::new(out_from_init(output), 0),
-            self.dict,
-        )
-    }
-
-    /// Decompress `input` into uninitialized `output`, returning the
-    /// initialized prefix that holds the decompressed bytes.
-    ///
-    /// See [`decompress_into_uninit`](crate::decompress_into_uninit).
-    pub fn decompress_into_uninit<'b>(
-        &self,
-        input: &[u8],
-        output: &'b mut [MaybeUninit<u8>],
-    ) -> Result<&'b mut [u8], DecompressError> {
-        decompress_uninit::<true>(input, output, self.dict)
+        decompress_internal::<true>(input, &mut OutSink::new(output, 0), self.dict)
     }
 
     /// Decompress `input` and append it to `output`, returning the number of
@@ -783,18 +714,6 @@ impl Decompressor {
         output: &mut [u8],
     ) -> Result<usize, DecompressError> {
         DecompressorRef::with_dict(&self.dict).decompress_into(input, output)
-    }
-
-    /// Decompress `input` into uninitialized `output`, returning the
-    /// initialized prefix that holds the decompressed bytes.
-    ///
-    /// See [`decompress_into_uninit`](crate::decompress_into_uninit).
-    pub fn decompress_into_uninit<'b>(
-        &self,
-        input: &[u8],
-        output: &'b mut [MaybeUninit<u8>],
-    ) -> Result<&'b mut [u8], DecompressError> {
-        DecompressorRef::with_dict(&self.dict).decompress_into_uninit(input, output)
     }
 
     /// Decompress `input` and append it to `output`, returning the number of
@@ -968,229 +887,5 @@ mod test {
         let (_, pos) = sink.output_mut_with_pos();
         *pos = 9;
         let _ = decompress_into_sink_with_dict::<false>(&input, &mut sink, b"");
-    }
-}
-
-#[cfg(kani)]
-mod kani_proofs {
-    use super::*;
-    use crate::out::{OutSink, out_from_init};
-    use lz4rip_core::MINMATCH;
-
-    // -- End-to-end proofs (slow path, all inputs exhaustive) --
-    //
-    // The six-byte proofs peak at 9 GB (no dictionary) and 12 GB (dictionary).
-
-    #[kani::proof]
-    #[kani::unwind(5)]
-    fn decompress_4byte_no_oob() {
-        let input: [u8; 4] = kani::any();
-        let mut output = [0u8; 16];
-        let mut sink = OutSink::new(out_from_init(&mut output), 0);
-        let _ = decompress_internal::<false>(&input, &mut sink, b"");
-    }
-
-    #[kani::proof]
-    #[kani::unwind(7)]
-    fn decompress_6byte_no_oob() {
-        let input: [u8; 6] = kani::any();
-        let mut output = [0u8; 20];
-        let mut sink = OutSink::new(out_from_init(&mut output), 0);
-        let _ = decompress_internal::<false>(&input, &mut sink, b"");
-    }
-
-    #[kani::proof]
-    #[kani::unwind(7)]
-    fn decompress_dict_6byte_no_oob() {
-        let input: [u8; 6] = kani::any();
-        let dict: [u8; 8] = kani::any();
-        let mut output = [0u8; 20];
-        let mut sink = OutSink::new(out_from_init(&mut output), 0);
-        let _ = decompress_internal::<true>(&input, &mut sink, &dict);
-    }
-
-    // -- Fast-loop proofs --
-    //
-    // The end-to-end proofs above only reach the general path (inputs
-    // shorter than `FAST_IN` never enter the fast loop). These proofs take
-    // the fast loop's entry tests as assumptions, with symbolic positions and
-    // lengths, and run the copies it performs. Every copy is bounds-checked, so a proof
-    // failure would be a panic, not undefined behavior: they show the entry
-    // tests are enough for the copies never to panic.
-
-    /// Input side of one fast-loop token: the `FAST_IN` window, the literal
-    /// chunk, the offset and the one-byte match length extension.
-    #[kani::proof]
-    fn fast_loop_input_window_in_bounds() {
-        let input: [u8; 3 * FAST_IN] = kani::any();
-        let ip: usize = kani::any();
-        kani::assume(ip <= input.len() - FAST_IN);
-        let window: &[u8; FAST_IN] = crate::primitives::chunk(&input, ip);
-        let literal_length = (window[0] >> ML_BITS) as usize;
-        kani::assume(literal_length <= SHORT_LITERAL_MAX);
-        let _: &[u8; WIDE_CHUNK] = crate::primitives::chunk(window, TOKEN_LEN);
-        let _: &[u8; OFFSET_LEN] = crate::primitives::chunk(window, TOKEN_LEN + literal_length);
-        let _ = window[TOKEN_LEN + literal_length + OFFSET_LEN];
-    }
-
-    /// Short literal and short match, `MATCH_CHUNK <= offset <= dst`, after
-    /// the `op + literal_length + SHORT_MATCH_MAX <= len` entry test.
-    #[kani::proof]
-    fn fast_loop_short_match_in_bounds() {
-        let mut output = [0u8; 2 * LONG_CHUNK];
-        let out = out_from_init(&mut output);
-        let op: usize = kani::any();
-        let literal_length: usize = kani::any();
-        let match_nib: usize = kani::any();
-        let offset: usize = kani::any();
-        kani::assume(literal_length <= SHORT_LITERAL_MAX && match_nib < ML_MASK);
-        kani::assume(op < out.len() && op + literal_length + SHORT_MATCH_MAX <= out.len());
-        let dst = op + literal_length;
-        kani::assume(offset >= MATCH_CHUNK && offset <= dst);
-        crate::primitives::store(out, op, out_array([0u8; WIDE_CHUNK]));
-        let mut end = dst;
-        crate::primitives::wild_match_copy_18(out, &mut end, offset, MINMATCH + match_nib);
-    }
-
-    /// Long match, `WIDE_CHUNK <= offset <= dst`, after the
-    /// `dst + match_length + LONG_CHUNK <= len` entry test. Lengths up to the
-    /// unrolled prefix plus one loop iteration cover the checked loop and the
-    /// exact copy of long disjoint matches.
-    #[kani::proof]
-    #[kani::unwind(4)]
-    fn fast_loop_long_match_in_bounds() {
-        const MAX_LEN: usize = 3 * LONG_CHUNK;
-        let mut output = [0u8; MAX_LEN + MAX_LEN + LONG_CHUNK];
-        let out = out_from_init(&mut output);
-        let dst: usize = kani::any();
-        let offset: usize = kani::any();
-        let match_length: usize = kani::any();
-        kani::assume(match_length >= MINMATCH + ML_MASK && match_length <= MAX_LEN);
-        kani::assume(dst < out.len() && dst + match_length + LONG_CHUNK <= out.len());
-        kani::assume(offset >= WIDE_CHUNK && offset <= dst);
-        crate::primitives::wild_copy_match_long(out, dst, offset, match_length);
-    }
-
-    /// Long literal with a one-byte extension, after the
-    /// `literal_end + LONG_CHUNK <= input.len()` and
-    /// `op + literal_length + LONG_CHUNK <= len` entry tests. `out_array` maps
-    /// `LONG_CHUNK` bytes, so the unwind bound is `LONG_CHUNK + 1` (Kani takes
-    /// only a literal).
-    #[kani::proof]
-    #[kani::unwind(33)]
-    fn fast_loop_long_literal_in_bounds() {
-        const BUF: usize = 4 * LONG_CHUNK;
-        let input = [0u8; BUF];
-        let mut output = [0u8; BUF];
-        let out = out_from_init(&mut output);
-        let ip: usize = kani::any();
-        let op: usize = kani::any();
-        let literal_length: usize = kani::any();
-        kani::assume(literal_length >= RUN_MASK && literal_length <= RUN_MASK + 2 * LONG_CHUNK);
-        kani::assume(ip < input.len() && op < out.len());
-        let literal_start = ip + TOKEN_LEN + EXT_LEN;
-        let literal_end = literal_start + literal_length;
-        kani::assume(literal_end + LONG_CHUNK <= input.len());
-        kani::assume(op + literal_length + LONG_CHUNK <= out.len());
-        let _: &[u8; OFFSET_LEN] = crate::primitives::chunk(&input, literal_end);
-        crate::primitives::copy_literals_32(&input, literal_start, out, op, literal_length);
-    }
-
-    // -- General-path copy proofs --
-    //
-    // Kani builds drop the general path's wide copies (`WIDE_COPIES`), which
-    // the end-to-end proofs cannot reach. The first three proofs take each
-    // wide copy's guard as assumptions, with symbolic positions and lengths.
-    // The last checks the offset 2-7 pattern copy byte for byte. Lengths
-    // start at 1: a match continued from the dictionary can be that short.
-
-    /// Literal wildcopy, after the two `LONG_CHUNK` headroom tests.
-    /// `out_array` maps `LONG_CHUNK` bytes, so the unwind bound is
-    /// `LONG_CHUNK + 1`.
-    #[kani::proof]
-    #[kani::unwind(33)]
-    fn general_literal_wildcopy_in_bounds() {
-        const BUF: usize = 4 * LONG_CHUNK;
-        let input = [0u8; BUF];
-        let mut output = [0u8; BUF];
-        let out = out_from_init(&mut output);
-        let input_pos: usize = kani::any();
-        let pos: usize = kani::any();
-        let literal_length: usize = kani::any();
-        kani::assume(literal_length != 0 && literal_length <= BUF);
-        kani::assume(input_pos < input.len() && pos < out.len());
-        kani::assume(input_pos + literal_length + LONG_CHUNK <= input.len());
-        kani::assume(pos + literal_length + LONG_CHUNK <= out.len());
-        let mut end = pos;
-        crate::primitives::wild_copy_literals(&input, input_pos, out, &mut end, literal_length);
-    }
-
-    /// `WIDE_CHUNK <= offset <= pos`, after the `LONG_CHUNK` headroom test.
-    /// Lengths up to the unrolled prefix plus one loop iteration cover the
-    /// checked loop and the exact copy of long disjoint matches.
-    #[kani::proof]
-    #[kani::unwind(4)]
-    fn general_long_match_in_bounds() {
-        const MAX_LEN: usize = 3 * LONG_CHUNK;
-        let mut output = [0u8; MAX_LEN + MAX_LEN + LONG_CHUNK];
-        let out = out_from_init(&mut output);
-        let pos: usize = kani::any();
-        let offset: usize = kani::any();
-        let match_length: usize = kani::any();
-        kani::assume(match_length != 0 && match_length <= MAX_LEN);
-        kani::assume(pos < out.len() && pos + match_length + LONG_CHUNK <= out.len());
-        kani::assume(offset >= WIDE_CHUNK && offset <= pos);
-        let mut end = pos;
-        crate::primitives::wild_copy_match_32(out, pos - offset, &mut end, match_length);
-    }
-
-    /// `WIDE_CHUNK <= offset <= pos`, after the `WIDE_CHUNK` headroom test.
-    #[kani::proof]
-    #[kani::unwind(4)]
-    fn general_wide_match_in_bounds() {
-        const MAX_LEN: usize = 3 * WIDE_CHUNK;
-        let mut output = [0u8; MAX_LEN + MAX_LEN + WIDE_CHUNK];
-        let out = out_from_init(&mut output);
-        let pos: usize = kani::any();
-        let offset: usize = kani::any();
-        let match_length: usize = kani::any();
-        kani::assume(match_length != 0 && match_length <= MAX_LEN);
-        kani::assume(pos < out.len() && pos + match_length + WIDE_CHUNK <= out.len());
-        kani::assume(offset >= WIDE_CHUNK && offset <= pos);
-        let mut end = pos;
-        crate::primitives::wild_copy_match_16(out, pos - offset, &mut end, match_length);
-    }
-
-    /// Offsets `MIN_COPY_OFFSET` to `MATCH_CHUNK - 1`: the pattern copy stays
-    /// in bounds and writes the same bytes as a byte-by-byte overlapping
-    /// copy. The reference loop and the final compare cover up to
-    /// `4 * MATCH_CHUNK` bytes, so the unwind bound is one more (Kani takes
-    /// only a literal).
-    #[kani::proof]
-    #[kani::unwind(33)]
-    fn short_offset_copy_matches_bytewise() {
-        const MAX_LEN: usize = 3 * MATCH_CHUNK;
-        let history: [u8; MATCH_CHUNK] = kani::any();
-        let mut output = [0u8; MATCH_CHUNK + MAX_LEN + MATCH_CHUNK];
-        let dst = history.len();
-        output[..dst].copy_from_slice(&history);
-        let mut expected = output;
-        let offset: usize = kani::any();
-        let match_length: usize = kani::any();
-        kani::assume((MIN_COPY_OFFSET..MATCH_CHUNK).contains(&offset));
-        kani::assume(match_length != 0 && match_length <= MAX_LEN);
-        kani::assume(dst + match_length + MATCH_CHUNK <= output.len());
-        for i in 0..match_length {
-            expected[dst + i] = expected[dst + i - offset];
-        }
-        let mut pos = dst;
-        crate::primitives::wild_copy_match_short_offset(
-            out_from_init(&mut output),
-            &mut pos,
-            offset,
-            match_length,
-        );
-        assert_eq!(pos, dst + match_length);
-        assert_eq!(output[..dst + match_length], expected[..dst + match_length]);
     }
 }

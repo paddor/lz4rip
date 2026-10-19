@@ -154,7 +154,6 @@ fn bug_fuzz_6() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_so_many_zeros() {
     let data: Vec<u8> = iter::repeat_n(0, 30_000).collect();
     test_roundtrip(data);
@@ -182,25 +181,21 @@ fn big_compression() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_dickens() {
     test_roundtrip(&*DICKENS);
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_json_66k() {
     test_roundtrip(compression66json());
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_text_65k() {
     test_roundtrip(compression65());
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_text_34k() {
     test_roundtrip(compression34k());
 }
@@ -318,7 +313,6 @@ proptest! {
     })]
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn proptest_roundtrip(v in vec_of_vec()) {
         let data: Vec<u8> = v.iter().flat_map(|v| v.iter()).cloned().collect::<Vec<_>>();
         test_roundtrip(data);

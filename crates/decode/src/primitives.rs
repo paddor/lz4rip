@@ -7,14 +7,8 @@
 //! is loaded completely before it is stored, so a chunk whose source overlaps
 //! its destination repeats the pattern like the byte-by-byte copy would,
 //! provided the offset is at least the chunk size.
-//!
-//! Default-build output buffers are `[MaybeUninit<u8>]` (see `crate::out`).
-//! Every load from output reads initialized bytes: history before the start
-//! position, or bytes stored earlier in the same call. Each chunk's source
-//! ends at or before that chunk's destination.
 
 use crate::decompress::SHORT_MATCH_MAX;
-use crate::out::{OutByte, out_array, out_slice};
 
 /// Chunk size of short match copies. A chunked copy is correct for offsets of
 /// at least its chunk size. Shorter offsets, from `MIN_COPY_OFFSET`, use
@@ -67,19 +61,19 @@ fn tail_window<T>(buf: &mut [T], end: usize, len: usize) -> &mut [T] {
 
 /// Load `N` output bytes at `at`.
 #[inline(always)]
-fn load<const N: usize>(buf: &[OutByte], at: usize) -> [OutByte; N] {
+fn load<const N: usize>(buf: &[u8], at: usize) -> [u8; N] {
     *chunk(buf, at)
 }
 
 /// Store `N` output bytes at `at`.
 #[inline(always)]
-pub(crate) fn store<const N: usize>(buf: &mut [OutByte], at: usize, chunk: [OutByte; N]) {
+pub(crate) fn store<const N: usize>(buf: &mut [u8], at: usize, chunk: [u8; N]) {
     *chunk_mut(buf, at) = chunk;
 }
 
 /// Copy `N` bytes within `buf` from `src` to `dst`, loading before storing.
 #[inline(always)]
-fn copy_chunk<const N: usize>(buf: &mut [OutByte], src: usize, dst: usize) {
+fn copy_chunk<const N: usize>(buf: &mut [u8], src: usize, dst: usize) {
     let chunk = load::<N>(buf, src);
     store(buf, dst, chunk);
 }
@@ -90,7 +84,7 @@ fn copy_chunk<const N: usize>(buf: &mut [OutByte], src: usize, dst: usize) {
 /// one window, so only the window costs a bounds check.
 #[inline(always)]
 pub(crate) fn wild_match_copy_18(
-    buf: &mut [OutByte],
+    buf: &mut [u8],
     dst_pos: &mut usize,
     offset: usize,
     advance: usize,
@@ -113,7 +107,7 @@ pub(crate) fn wild_match_copy_18(
 /// matches loop with checks. A longer match that does not overlap its source
 /// is one exact copy instead.
 #[inline(always)]
-pub(crate) fn wild_copy_match_long(buf: &mut [OutByte], dst: usize, offset: usize, len: usize) {
+pub(crate) fn wild_copy_match_long(buf: &mut [u8], dst: usize, offset: usize, len: usize) {
     debug_assert!(offset >= WIDE_CHUNK);
     if len > LONG_UNROLLED && offset >= len {
         // Long and disjoint from its source: one exact copy.
@@ -147,7 +141,7 @@ pub(crate) fn wild_copy_match_long(buf: &mut [OutByte], dst: usize, offset: usiz
 /// `*dst_pos + len`.
 #[inline(always)]
 pub(crate) fn wild_copy_match_short_offset(
-    buf: &mut [OutByte],
+    buf: &mut [u8],
     dst_pos: &mut usize,
     offset: usize,
     len: usize,
@@ -169,7 +163,7 @@ pub(crate) fn wild_copy_match_short_offset(
     let step = MATCH_CHUNK - MATCH_CHUNK % offset;
     let mut done = 0;
     while done < len {
-        *chunk_mut::<OutByte, MATCH_CHUNK>(window, offset + done) = pattern;
+        *chunk_mut::<u8, MATCH_CHUNK>(window, offset + done) = pattern;
         done += step;
     }
     *dst_pos += len;
@@ -180,12 +174,12 @@ pub(crate) fn wild_copy_match_short_offset(
 pub(crate) fn copy_from_src(
     src: &[u8],
     src_pos: usize,
-    dst: &mut [OutByte],
+    dst: &mut [u8],
     dst_pos: &mut usize,
     len: usize,
 ) {
     let d = *dst_pos;
-    dst[d..d + len].copy_from_slice(out_slice(&src[src_pos..src_pos + len]));
+    dst[d..d + len].copy_from_slice(&src[src_pos..src_pos + len]);
     *dst_pos += len;
 }
 
@@ -195,7 +189,7 @@ pub(crate) fn copy_from_src(
 /// O(log(match_len/offset)) copies.
 #[inline(always)]
 pub(crate) fn copy_within_overlapping(
-    buf: &mut [OutByte],
+    buf: &mut [u8],
     start: usize,
     dst_pos: &mut usize,
     match_len: usize,
@@ -225,7 +219,7 @@ pub(crate) fn copy_within_overlapping(
 pub(crate) fn copy_literals_32(
     src: &[u8],
     src_pos: usize,
-    dst: &mut [OutByte],
+    dst: &mut [u8],
     dst_pos: usize,
     len: usize,
 ) {
@@ -233,12 +227,12 @@ pub(crate) fn copy_literals_32(
     let s = &src[src_pos..][..n];
     let d = &mut dst[dst_pos..][..n];
     for (d, s) in d
-        .chunks_exact_mut(LONG_CHUNK)
-        .zip(s.chunks_exact(LONG_CHUNK))
+        .as_chunks_mut::<LONG_CHUNK>()
+        .0
+        .iter_mut()
+        .zip(s.as_chunks::<LONG_CHUNK>().0)
     {
-        let s: &[u8; LONG_CHUNK] = s.try_into().unwrap();
-        let d: &mut [OutByte; LONG_CHUNK] = d.try_into().unwrap();
-        *d = out_array(*s);
+        *d = *s;
     }
 }
 
@@ -248,7 +242,7 @@ pub(crate) fn copy_literals_32(
 pub(crate) fn wild_copy_literals(
     src: &[u8],
     src_pos: usize,
-    dst: &mut [OutByte],
+    dst: &mut [u8],
     dst_pos: &mut usize,
     len: usize,
 ) {
@@ -261,12 +255,7 @@ pub(crate) fn wild_copy_literals(
 /// `*dst_pos + len`. All copies index one window, so the first chunk needs no
 /// bounds check of its own.
 #[inline(always)]
-fn wild_copy_match<const STEP: usize>(
-    buf: &mut [OutByte],
-    src: usize,
-    dst_pos: &mut usize,
-    len: usize,
-) {
+fn wild_copy_match<const STEP: usize>(buf: &mut [u8], src: usize, dst_pos: &mut usize, len: usize) {
     let offset = *dst_pos - src;
     debug_assert!(offset >= STEP);
     let window = tail_window(buf, *dst_pos + len + STEP, offset + len + STEP);
@@ -284,21 +273,21 @@ fn wild_copy_match<const STEP: usize>(
 /// Match wildcopy for `offset >= MATCH_CHUNK`, one `MATCH_CHUNK` per step.
 /// Needs `MATCH_CHUNK` bytes of slack.
 #[inline(always)]
-pub(crate) fn wild_copy_match_8(buf: &mut [OutByte], src: usize, dst_pos: &mut usize, len: usize) {
+pub(crate) fn wild_copy_match_8(buf: &mut [u8], src: usize, dst_pos: &mut usize, len: usize) {
     wild_copy_match::<MATCH_CHUNK>(buf, src, dst_pos, len);
 }
 
 /// Match wildcopy for `offset >= WIDE_CHUNK`, one `WIDE_CHUNK` per step. Needs
 /// `WIDE_CHUNK` bytes of slack.
 #[inline(always)]
-pub(crate) fn wild_copy_match_16(buf: &mut [OutByte], src: usize, dst_pos: &mut usize, len: usize) {
+pub(crate) fn wild_copy_match_16(buf: &mut [u8], src: usize, dst_pos: &mut usize, len: usize) {
     wild_copy_match::<WIDE_CHUNK>(buf, src, dst_pos, len);
 }
 
 /// Match wildcopy for `offset >= WIDE_CHUNK`, one `LONG_CHUNK` per step. Needs
 /// `LONG_CHUNK` bytes of slack.
 #[inline(always)]
-pub(crate) fn wild_copy_match_32(buf: &mut [OutByte], src: usize, dst_pos: &mut usize, len: usize) {
+pub(crate) fn wild_copy_match_32(buf: &mut [u8], src: usize, dst_pos: &mut usize, len: usize) {
     let dst = *dst_pos;
     wild_copy_match_long(buf, dst, dst - src, len);
     *dst_pos += len;
@@ -306,12 +295,7 @@ pub(crate) fn wild_copy_match_32(buf: &mut [OutByte], src: usize, dst_pos: &mut 
 
 /// Non-overlapping copy of `len` bytes within `buf` (`src + len <= *dst_pos`).
 #[inline(always)]
-pub(crate) fn copy_within_nonoverlap(
-    buf: &mut [OutByte],
-    src: usize,
-    dst_pos: &mut usize,
-    len: usize,
-) {
+pub(crate) fn copy_within_nonoverlap(buf: &mut [u8], src: usize, dst_pos: &mut usize, len: usize) {
     debug_assert!(src + len <= *dst_pos);
     let (history, out) = buf.split_at_mut(*dst_pos);
     out[..len].copy_from_slice(&history[src..src + len]);

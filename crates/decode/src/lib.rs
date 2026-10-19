@@ -3,10 +3,7 @@
 #![deny(warnings)]
 #![deny(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
-// Decoding is safe code. The only `unsafe` is `out::zero_init`, which views
-// zero-filled `[MaybeUninit<u8>]` output as `[u8]` for
-// `decompress_into_uninit`.
-#![deny(unsafe_code)]
+#![forbid(unsafe_code)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
@@ -18,9 +15,7 @@ mod validate;
 
 #[cfg(feature = "alloc")]
 pub use decompress::Decompressor;
-pub use decompress::{
-    DecompressorRef, decompress_into, decompress_into_uninit, decompress_into_with_dict,
-};
+pub use decompress::{DecompressorRef, decompress_into, decompress_into_with_dict};
 #[cfg(feature = "alloc")]
 pub use decompress::{decompress, decompress_append};
 pub use lz4rip_core::DecompressError;

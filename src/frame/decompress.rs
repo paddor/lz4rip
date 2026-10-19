@@ -351,14 +351,14 @@ impl<R: io::Read> FrameDecoder<R> {
             }
 
             BlockInfo::EndMark => {
-                if let Some(expected) = frame_info.content_size {
-                    if self.content_len != expected {
-                        return Err(Error::ContentLengthError {
-                            expected,
-                            actual: self.content_len,
-                        }
-                        .into());
+                if let Some(expected) = frame_info.content_size
+                    && self.content_len != expected
+                {
+                    return Err(Error::ContentLengthError {
+                        expected,
+                        actual: self.content_len,
                     }
+                    .into());
                 }
                 if frame_info.content_checksum {
                     let expected_checksum = Self::read_checksum(&mut self.r)?;
