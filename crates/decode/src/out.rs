@@ -1,94 +1,36 @@
 //! Decoder output buffer.
 //!
-//! The default 64-bit build decodes into `[MaybeUninit<u8>]`, so callers can
-//! pass uninitialized memory. The decoder stores only bytes copied from the
-//! input, the dictionary, or output it already stored, and it loads output
-//! bytes only after storing them (or from initialized history before the
-//! start position). Every byte below the final position has been stored.
-//!
-//! Paranoid and 32-bit builds decode into `[u8]`. Uninitialized output is
-//! zero-filled first.
+//! The decoder writes into `[u8]`. Uninitialized output is zero-filled first.
 
 use core::mem::MaybeUninit;
 
 use lz4rip_core::slice_copy;
 
 /// Element type of the decoder's output buffer.
-#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
-pub(crate) type OutByte = MaybeUninit<u8>;
-
-/// Element type of the decoder's output buffer.
-#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 pub(crate) type OutByte = u8;
 
 /// Views initialized output as decoder output.
-#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
-#[allow(unsafe_code)]
-#[inline(always)]
-pub(crate) fn out_from_init(output: &mut [u8]) -> &mut [OutByte] {
-    // SAFETY: `MaybeUninit<u8>` has the layout of `u8`. The decoder never
-    // stores an uninitialized byte, so `output` stays initialized.
-    unsafe { &mut *(output as *mut [u8] as *mut [MaybeUninit<u8>]) }
-}
-
-/// Views initialized output as decoder output.
-#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 #[inline(always)]
 pub(crate) fn out_from_init(output: &mut [u8]) -> &mut [OutByte] {
     output
 }
 
 /// Views input bytes as decoder output elements.
-#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
-#[allow(unsafe_code)]
-#[inline(always)]
-pub(crate) fn out_slice(data: &[u8]) -> &[OutByte] {
-    // SAFETY: `MaybeUninit<u8>` has the layout of `u8`, and a shared slice
-    // cannot store through it.
-    unsafe { &*(data as *const [u8] as *const [MaybeUninit<u8>]) }
-}
-
-/// Views input bytes as decoder output elements.
-#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 #[inline(always)]
 pub(crate) fn out_slice(data: &[u8]) -> &[OutByte] {
     data
 }
 
 /// Converts an input chunk to decoder output elements.
-#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
-#[inline(always)]
-pub(crate) fn out_array<const N: usize>(chunk: [u8; N]) -> [OutByte; N] {
-    chunk.map(MaybeUninit::new)
-}
-
-/// Converts an input chunk to decoder output elements.
-#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 #[inline(always)]
 pub(crate) fn out_array<const N: usize>(chunk: [u8; N]) -> [OutByte; N] {
     chunk
 }
 
-/// Views `output[..len]` as initialized bytes.
-///
-/// # Safety
-///
-/// The decoder must have stored every byte of `output[..len]`.
-#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
-#[allow(unsafe_code)]
-#[inline(always)]
-pub(crate) unsafe fn assume_init_prefix(output: &mut [OutByte], len: usize) -> &mut [u8] {
-    let init = &mut output[..len];
-    // SAFETY: the caller guarantees `init` is initialized, and
-    // `MaybeUninit<u8>` has the layout of `u8`.
-    unsafe { &mut *(init as *mut [MaybeUninit<u8>] as *mut [u8]) }
-}
-
 /// Zero-fills `output` and views it as initialized bytes.
 ///
-/// This is the only `unsafe` in paranoid and 32-bit builds. Safe Rust has no
-/// stable way to view a filled `[MaybeUninit<u8>]` as `[u8]`.
-#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
+/// This is the only `unsafe` left. Safe Rust has no stable way to view a
+/// filled `[MaybeUninit<u8>]` as `[u8]`.
 #[allow(unsafe_code)]
 #[inline]
 pub(crate) fn zero_init(output: &mut [MaybeUninit<u8>]) -> &mut [u8] {
@@ -101,26 +43,9 @@ pub(crate) fn zero_init(output: &mut [MaybeUninit<u8>]) -> &mut [u8] {
 }
 
 /// Fills `dst` with `val` (offset-1 matches).
-///
-/// `fill` on `[MaybeUninit<u8>]` is an element loop, which LLVM lowers to
-/// `memset`. Kani cannot unwind that loop within the harness bounds, so Kani
-/// builds stub it with `write_bytes`, which is what `fill` does for `[u8]`.
-#[cfg(not(all(kani, not(any(feature = "paranoid", target_pointer_width = "32")))))]
 #[inline(always)]
 pub(crate) fn fill_out(dst: &mut [OutByte], val: OutByte) {
     dst.fill(val);
-}
-
-/// Fills `dst` with `val` (offset-1 matches). Kani stub, see above.
-#[cfg(all(kani, not(any(feature = "paranoid", target_pointer_width = "32"))))]
-#[allow(unsafe_code)]
-#[inline(always)]
-pub(crate) fn fill_out(dst: &mut [OutByte], val: OutByte) {
-    // SAFETY: `dst` is writable for `dst.len()` bytes, and Kani harness
-    // buffers are zero-initialized.
-    unsafe {
-        core::ptr::write_bytes(dst.as_mut_ptr().cast::<u8>(), val.assume_init(), dst.len());
-    }
 }
 
 /// Output buffer and write position for the decoder.

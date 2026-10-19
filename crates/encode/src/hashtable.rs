@@ -1,164 +1,97 @@
 #[cfg(feature = "alloc")]
 use alloc::boxed::Box;
 
-/// Count matching bytes between `input[cur..]` and `source[candidate..]`,
-/// stopping before `input[input_len - end_offset]`. Uses raw pointer
-/// comparison (usize, then u32/u16/u8 stepdown) without bounds checks.
+/// Count matching bytes between `input[*cur..]` and `source[candidate..]`,
+/// stopping before `input[input.len() - end_offset]`, and advance `*cur`.
 ///
-/// Caller must ensure both ranges are valid and `end_offset` bytes of
-/// input are reserved after the match region.
-#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
+/// Compares 8 bytes at a time, then steps down 4/2/1 bytes. Both sides are
+/// cut to one equal length up front, so the loop needs no bounds checks.
+/// `to_le` makes `trailing_zeros` count from the lowest-address mismatch.
 #[inline]
-pub(crate) unsafe fn count_same_bytes_inbounds(
+pub(crate) fn count_same_bytes(
     input: &[u8],
     cur: &mut usize,
     source: &[u8],
     candidate: usize,
     end_offset: usize,
 ) -> usize {
-    let max_input = input.len().saturating_sub(*cur + end_offset);
-    debug_assert!(candidate <= source.len());
-    let max_cand = source.len().saturating_sub(candidate);
-    let input_end = *cur + max_input.min(max_cand);
-    let start = *cur;
-
-    // SAFETY: `input_end` is clamped to both `input.len() - end_offset` and
-    // `source.len() - candidate`, so all pointer offsets up to `input_end` are
-    // within the respective slices.
-    unsafe {
-        let mut src_ptr = source.as_ptr().add(candidate);
-        let inp_base = input.as_ptr();
-
-        const STEP: usize = core::mem::size_of::<usize>();
-        while *cur + STEP <= input_end {
-            let diff = (inp_base.add(*cur) as *const usize).read_unaligned()
-                ^ (src_ptr as *const usize).read_unaligned();
-            if diff == 0 {
-                *cur += STEP;
-                src_ptr = src_ptr.add(STEP);
-            } else {
-                *cur += (diff.to_le().trailing_zeros() / 8) as usize;
-                return *cur - start;
-            }
-        }
-
-        #[cfg(target_pointer_width = "64")]
-        if input_end - *cur >= 4 {
-            let diff = (inp_base.add(*cur) as *const u32).read_unaligned()
-                ^ (src_ptr as *const u32).read_unaligned();
-            if diff == 0 {
-                *cur += 4;
-                src_ptr = src_ptr.add(4);
-            } else {
-                *cur += (diff.to_le().trailing_zeros() / 8) as usize;
-                return *cur - start;
-            }
-        }
-
-        if input_end - *cur >= 2
-            && (inp_base.add(*cur) as *const u16).read_unaligned()
-                == (src_ptr as *const u16).read_unaligned()
-        {
-            *cur += 2;
-            src_ptr = src_ptr.add(2);
-        }
-
-        if *cur < input_end && *inp_base.add(*cur) == *src_ptr {
-            *cur += 1;
-        }
-    }
-
-    *cur - start
-}
-
-/// Count matching bytes (paranoid: safe `chunks_exact` 8-byte compare).
-///
-/// Uses the same idiom as lz4_flex's safe encoder and the test-only
-/// `count_same_bytes` helper: `chunks_exact(8).zip(..)` avoids a per-iteration
-/// bounds check and autovectorizes, then a byte tail. `to_le` makes
-/// `trailing_zeros` count from the lowest-address mismatching byte.
-#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
-#[inline]
-pub(crate) fn count_same_bytes_inbounds(
-    input: &[u8],
-    cur: &mut usize,
-    source: &[u8],
-    candidate: usize,
-    end_offset: usize,
-) -> usize {
-    const STEP: usize = 8;
-    debug_assert!(*cur + end_offset <= input.len());
-    debug_assert!(candidate <= source.len());
-    let max_input = input.len() - *cur - end_offset;
-    let max_cand = source.len() - candidate;
-    let limit = max_input.min(max_cand);
-    let cur_slice = &input[*cur..*cur + limit];
-    let cand_slice = &source[candidate..candidate + limit];
+    let a = &input[*cur..input.len() - end_offset];
+    let b = &source[candidate..];
+    let n = a.len().min(b.len());
+    let (a, b) = (&a[..n], &b[..n]);
 
     let mut num = 0;
-    for (a, b) in cur_slice
-        .chunks_exact(STEP)
-        .zip(cand_slice.chunks_exact(STEP))
-    {
-        let av = u64::from_ne_bytes(a.try_into().unwrap());
-        let bv = u64::from_ne_bytes(b.try_into().unwrap());
-        if av == bv {
-            num += STEP;
-        } else {
-            num += ((av ^ bv).to_le().trailing_zeros() / 8) as usize;
+    let (ca, cb) = (a.chunks_exact(8), b.chunks_exact(8));
+    let (mut ra, mut rb) = (ca.remainder(), cb.remainder());
+    for (x, y) in ca.zip(cb) {
+        let diff =
+            u64::from_ne_bytes(x.try_into().unwrap()) ^ u64::from_ne_bytes(y.try_into().unwrap());
+        if diff != 0 {
+            num += (diff.to_le().trailing_zeros() / 8) as usize;
             *cur += num;
             return num;
         }
+        num += 8;
     }
-    num += cur_slice[num..]
-        .iter()
-        .zip(&cand_slice[num..])
-        .take_while(|(a, b)| a == b)
-        .count();
+
+    if let (Some(x), Some(y)) = (ra.first_chunk::<4>(), rb.first_chunk::<4>()) {
+        let diff = u32::from_ne_bytes(*x) ^ u32::from_ne_bytes(*y);
+        if diff != 0 {
+            num += (diff.to_le().trailing_zeros() / 8) as usize;
+            *cur += num;
+            return num;
+        }
+        num += 4;
+        (ra, rb) = (&ra[4..], &rb[4..]);
+    }
+    if let (Some(x), Some(y)) = (ra.first_chunk::<2>(), rb.first_chunk::<2>()) {
+        if x == y {
+            num += 2;
+            (ra, rb) = (&ra[2..], &rb[2..]);
+        }
+    }
+    if let (Some(x), Some(y)) = (ra.first(), rb.first()) {
+        if x == y {
+            num += 1;
+        }
+    }
 
     *cur += num;
     num
 }
 
-/// Read 4 bytes from `input` at position `n` without bounds checking.
-///
-/// # Safety
-/// Caller must ensure `n + 4 <= input.len()`.
-#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
-#[inline]
-pub(crate) unsafe fn get_batch_inbounds(input: &[u8], n: usize) -> u32 {
-    debug_assert!(n + 4 <= input.len());
-    // SAFETY: caller ensures `n + 4 <= input.len()`.
-    unsafe { (input.as_ptr().add(n) as *const u32).read_unaligned() }
+/// Read 4 bytes at `pos` (native-endian).
+#[inline(always)]
+pub(crate) fn rd32(src: &[u8], pos: usize) -> u32 {
+    u32::from_ne_bytes(*src[pos..].first_chunk::<4>().unwrap())
 }
 
-/// Read 4 bytes at position `n` (paranoid: bounds-checked, native-endian).
-#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
-#[inline]
-pub(crate) fn get_batch_inbounds(input: &[u8], n: usize) -> u32 {
-    u32::from_ne_bytes(input[n..n + 4].try_into().unwrap())
+/// Read 8 bytes at `pos` (native-endian).
+#[inline(always)]
+pub(crate) fn rd64(src: &[u8], pos: usize) -> u64 {
+    u64::from_ne_bytes(*src[pos..].first_chunk::<8>().unwrap())
 }
 
-/// Read an usize sized "batch" from some position (native-endian).
-#[inline]
-#[cfg(target_pointer_width = "64")]
-pub(crate) fn get_batch_arch(input: &[u8], n: usize) -> usize {
-    const USIZE_SIZE: usize = core::mem::size_of::<usize>();
-    let arr: &[u8; USIZE_SIZE] = input[n..n + USIZE_SIZE].try_into().unwrap();
-    usize::from_ne_bytes(*arr)
+/// `rd64(src, pos)` for a `pos` the caller knows is at most `limit`, where
+/// the compiler sees `limit + 8 <= src.len()`. Reading at `pos.min(limit)`
+/// turns both bounds checks into one conditional move.
+#[inline(always)]
+pub(crate) fn rd64_upto(src: &[u8], pos: usize, limit: usize) -> u64 {
+    debug_assert!(pos <= limit);
+    rd64(src, pos.min(limit))
 }
 
-#[inline]
-#[cfg(all(
-    target_pointer_width = "64",
-    not(any(feature = "paranoid", target_pointer_width = "32"))
-))]
-unsafe fn get_batch_arch_unchecked(input: &[u8], n: usize) -> usize {
-    debug_assert!(n + core::mem::size_of::<usize>() <= input.len());
-    unsafe { (input.as_ptr().add(n) as *const usize).read_unaligned() }
+/// The first four bytes in memory of eight bytes read with [`rd64`], as
+/// [`rd32`] would read them.
+#[cfg(target_pointer_width = "32")]
+#[inline(always)]
+pub(crate) fn first4(v: u64) -> u32 {
+    let b = v.to_ne_bytes();
+    u32::from_ne_bytes([b[0], b[1], b[2], b[3]])
 }
 
 // Knuth's multiplicative hash constant (golden ratio * 2^32).
+#[cfg(target_pointer_width = "32")]
 const KNUTH: u32 = 2_654_435_761;
 
 #[cfg(target_pointer_width = "64")]
@@ -176,24 +109,26 @@ pub(crate) trait HashTable {
     fn put_at(&mut self, idx: usize, val: usize);
     /// Zero all entries.
     fn clear(&mut self);
-    /// Hash `input[pos..]` with bounds checking.
-    fn get_hash_at(input: &[u8], pos: usize) -> usize;
-    /// Hash `input[pos..]` without bounds checking.
-    ///
-    /// # Safety
-    /// Caller must ensure `pos + 8 <= input.len()`.
-    ///
-    /// Default delegates to the checked [`get_hash_at`](Self::get_hash_at).
-    #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
+    /// Hash the 8 bytes read with [`rd64`] at a position.
+    fn hash(bytes: u64) -> usize;
+    /// Hash `input[pos..]`. Reads 8 bytes.
     #[inline]
-    unsafe fn get_hash_at_inbounds(input: &[u8], pos: usize) -> usize {
-        Self::get_hash_at(input, pos)
+    fn get_hash_at(input: &[u8], pos: usize) -> usize {
+        Self::hash(rd64(input, pos))
     }
-    /// Hash `input[pos..]` (paranoid: bounds-checked).
-    #[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
-    #[inline]
-    fn get_hash_at_inbounds(input: &[u8], pos: usize) -> usize {
-        Self::get_hash_at(input, pos)
+}
+
+/// Hash of the first five bytes in memory of `bytes` (64-bit), or the first
+/// four (32-bit), onto `N` buckets.
+#[inline(always)]
+fn hash_n<const N: usize>(bytes: u64) -> usize {
+    #[cfg(target_pointer_width = "64")]
+    {
+        ((bytes as usize) << 24).wrapping_mul(PRIME5) >> (64 - N.ilog2() as usize)
+    }
+    #[cfg(target_pointer_width = "32")]
+    {
+        (first4(bytes).wrapping_mul(KNUTH) >> (32 - N.ilog2())) as usize
     }
 }
 
@@ -222,9 +157,6 @@ const fn assert_valid_entries(n: usize) {
         "hash table entry count must be at least MIN_ENTRIES (256)"
     );
 }
-
-#[cfg(target_pointer_width = "64")]
-const U32_HASH_BYTES: usize = 5;
 
 /// A hash table with `N` entries using 16-bit values (`2 * N` bytes).
 ///
@@ -268,25 +200,8 @@ impl<const N: usize> HashTable for HashTableU32U16<N> {
         self.dict.fill(0);
     }
     #[inline]
-    #[cfg(target_pointer_width = "64")]
-    fn get_hash_at(input: &[u8], pos: usize) -> usize {
-        let batch = get_batch_arch(input, pos);
-        (batch << 24).wrapping_mul(PRIME5) >> (64 - N.ilog2() as usize)
-    }
-    #[inline]
-    #[cfg(all(
-        target_pointer_width = "64",
-        not(any(feature = "paranoid", target_pointer_width = "32"))
-    ))]
-    unsafe fn get_hash_at_inbounds(input: &[u8], pos: usize) -> usize {
-        let batch = unsafe { get_batch_arch_unchecked(input, pos) };
-        (batch << 24).wrapping_mul(PRIME5) >> (64 - N.ilog2() as usize)
-    }
-    #[inline]
-    #[cfg(target_pointer_width = "32")]
-    fn get_hash_at(input: &[u8], pos: usize) -> usize {
-        let batch = u32::from_ne_bytes(input[pos..pos + 4].try_into().unwrap());
-        (batch.wrapping_mul(KNUTH) >> (32 - N.ilog2())) as usize
+    fn hash(bytes: u64) -> usize {
+        hash_n::<N>(bytes)
     }
 }
 
@@ -350,29 +265,7 @@ impl<const N: usize> HashTable for HashTableU32<N> {
         self.dict.fill(0);
     }
     #[inline]
-    #[cfg(target_pointer_width = "64")]
-    fn get_hash_at(input: &[u8], pos: usize) -> usize {
-        if U32_HASH_BYTES == 5 {
-            let batch = get_batch_arch(input, pos);
-            (batch << 24).wrapping_mul(PRIME5) >> (64 - N.ilog2() as usize)
-        } else {
-            let batch = u32::from_ne_bytes(input[pos..pos + 4].try_into().unwrap());
-            (batch.wrapping_mul(KNUTH) >> (32 - N.ilog2())) as usize
-        }
-    }
-    #[inline]
-    #[cfg(all(
-        target_pointer_width = "64",
-        not(any(feature = "paranoid", target_pointer_width = "32"))
-    ))]
-    unsafe fn get_hash_at_inbounds(input: &[u8], pos: usize) -> usize {
-        let batch = unsafe { get_batch_arch_unchecked(input, pos) };
-        (batch << 24).wrapping_mul(PRIME5) >> (64 - N.ilog2() as usize)
-    }
-    #[inline]
-    #[cfg(target_pointer_width = "32")]
-    fn get_hash_at(input: &[u8], pos: usize) -> usize {
-        let batch = u32::from_ne_bytes(input[pos..pos + 4].try_into().unwrap());
-        (batch.wrapping_mul(KNUTH) >> (32 - N.ilog2())) as usize
+    fn hash(bytes: u64) -> usize {
+        hash_n::<N>(bytes)
     }
 }

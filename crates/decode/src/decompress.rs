@@ -8,9 +8,6 @@ use lz4rip_core::MINMATCH;
 use lz4rip_core::Sink;
 use lz4rip_core::SliceSink;
 
-#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
-use crate::out::assume_init_prefix;
-#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 use crate::out::zero_init;
 use crate::out::{OutByte, OutSink, fill_out, out_array, out_from_init};
 use crate::primitives::{LONG_CHUNK, MATCH_CHUNK, MIN_COPY_OFFSET, WIDE_CHUNK, idx};
@@ -555,22 +552,6 @@ fn copy_from_dict(
 }
 
 /// Decompress into uninitialized `output` and return its initialized prefix.
-#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
-#[allow(unsafe_code)]
-#[inline]
-fn decompress_uninit<'a, const USE_DICT: bool>(
-    input: &[u8],
-    output: &'a mut [MaybeUninit<u8>],
-    ext_dict: &[u8],
-) -> Result<&'a mut [u8], DecompressError> {
-    let len = decompress_internal::<USE_DICT>(input, &mut OutSink::new(output, 0), ext_dict)?;
-    // SAFETY: decoding started at position 0 and returned `len`, the final
-    // position. The decoder stored every byte below it.
-    Ok(unsafe { assume_init_prefix(output, len) })
-}
-
-/// Decompress into uninitialized `output` and return its initialized prefix.
-#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
 #[inline]
 fn decompress_uninit<'a, const USE_DICT: bool>(
     input: &[u8],
@@ -582,34 +563,8 @@ fn decompress_uninit<'a, const USE_DICT: bool>(
     Ok(&mut output[..len])
 }
 
-/// Decompress into the spare capacity of `output` and extend its length.
-#[cfg(all(
-    feature = "alloc",
-    not(any(feature = "paranoid", target_pointer_width = "32"))
-))]
-#[allow(unsafe_code)]
-#[inline]
-fn decompress_append_internal<const USE_DICT: bool>(
-    input: &[u8],
-    output: &mut Vec<u8>,
-    max_size: usize,
-    ext_dict: &[u8],
-) -> Result<usize, DecompressError> {
-    output.reserve_exact(max_size);
-    let start = output.len();
-    let spare = &mut output.spare_capacity_mut()[..max_size];
-    let len = decompress_uninit::<USE_DICT>(input, spare, ext_dict)?.len();
-    // SAFETY: `decompress_uninit` initialized the first `len` spare bytes,
-    // and `len <= max_size` fits the reserved capacity.
-    unsafe { output.set_len(start + len) };
-    Ok(len)
-}
-
 /// Decompress into zero-filled new bytes of `output`, then truncate.
-#[cfg(all(
-    feature = "alloc",
-    any(feature = "paranoid", target_pointer_width = "32")
-))]
+#[cfg(feature = "alloc")]
 #[inline]
 fn decompress_append_internal<const USE_DICT: bool>(
     input: &[u8],
@@ -640,8 +595,7 @@ pub fn decompress_into(input: &[u8], output: &mut [u8]) -> Result<usize, Decompr
 ///
 /// Returns the initialized prefix of `output` that holds the decompressed
 /// bytes. `output` should be at least the size of the uncompressed data.
-/// The buffer is not zero-filled first, except in `paranoid` and 32-bit
-/// builds.
+/// The buffer is zero-filled first.
 #[inline]
 pub fn decompress_into_uninit<'a>(
     input: &[u8],
@@ -652,11 +606,10 @@ pub fn decompress_into_uninit<'a>(
 
 /// Decompress all bytes of `input` and append them to `output`.
 ///
-/// Reserves `max_size` bytes and decodes into the spare capacity of `output`,
-/// so the new bytes are not zero-filled first, except in `paranoid` and
-/// 32-bit builds. `max_size` must be >= the actual decompressed size. Returns
-/// the number of bytes appended. On error, `output` keeps its length and
-/// contents.
+/// Zero-fills `max_size` new bytes at the end of `output`, decodes into them,
+/// and truncates to the decoded length. `max_size` must be >= the actual
+/// decompressed size. Returns the number of bytes appended. On error,
+/// `output` keeps its length and contents.
 #[cfg(feature = "alloc")]
 #[inline]
 pub fn decompress_append(

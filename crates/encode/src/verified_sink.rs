@@ -1,10 +1,9 @@
 use lz4rip_core::Sink;
 use lz4rip_core::slice_copy;
 
-/// Like `SliceSink` but with unchecked writes. The caller must guarantee that all writes fit
-/// within the slice (e.g. by verifying `capacity >= get_maximum_output_size(input_len)` before
-/// any writes). Used for compression where the capacity invariant is checked upfront by
-/// `compress_internal`.
+/// Output sink for block compression. Writes are bounds-checked;
+/// `compress_internal` checks `capacity >= get_maximum_output_size(input_len)`
+/// upfront, so they never fail.
 pub(crate) struct VerifiedSliceSink<'a> {
     output: &'a mut [u8],
     pos: usize,
@@ -20,20 +19,6 @@ impl<'a> VerifiedSliceSink<'a> {
 }
 
 impl Sink for VerifiedSliceSink<'_> {
-    #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
-    #[inline]
-    fn push(&mut self, byte: u8) {
-        debug_assert!(self.pos < self.output.len());
-        // SAFETY: capacity was verified upfront by compress_internal before
-        // any writes. pos advances by at most get_maximum_output_size(input_len)
-        // which is <= output.len().
-        unsafe {
-            *self.output.get_unchecked_mut(self.pos) = byte;
-        }
-        self.pos += 1;
-    }
-
-    #[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
     #[inline]
     fn push(&mut self, byte: u8) {
         self.output[self.pos] = byte;
@@ -55,21 +40,6 @@ impl Sink for VerifiedSliceSink<'_> {
         self.extend_from_slice_wild(data, data.len())
     }
 
-    #[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
-    #[inline]
-    fn extend_from_slice_wild(&mut self, data: &[u8], copy_len: usize) {
-        debug_assert!(copy_len <= data.len());
-        debug_assert!(self.pos + data.len() <= self.output.len());
-        // SAFETY: same upfront capacity guarantee as push().
-        let dst = unsafe {
-            self.output
-                .get_unchecked_mut(self.pos..self.pos + data.len())
-        };
-        slice_copy(data, dst);
-        self.pos += copy_len;
-    }
-
-    #[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
     #[inline]
     fn extend_from_slice_wild(&mut self, data: &[u8], copy_len: usize) {
         debug_assert!(copy_len <= data.len());

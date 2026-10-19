@@ -2,13 +2,10 @@
 
 #![deny(warnings)]
 #![deny(missing_docs)]
-#![deny(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(not(feature = "std"), no_std)]
-// Decoding is safe code. The only `unsafe` is the uninitialized-output
-// boundary: layout views between `[u8]` and `[MaybeUninit<u8>]` in `out` and
-// the uninit entry points in `decompress`, each marked
-// `#[allow(unsafe_code)]`. Paranoid and 32-bit builds keep one:
-// `out::zero_init`.
+// Decoding is safe code. The only `unsafe` is `out::zero_init`, which views
+// zero-filled `[MaybeUninit<u8>]` output as `[u8]` for
+// `decompress_into_uninit`.
 #![deny(unsafe_code)]
 
 #[cfg(feature = "alloc")]
