@@ -4,9 +4,9 @@ use alloc::boxed::Box;
 /// Count matching bytes between `input[*cur..]` and `source[candidate..]`,
 /// stopping before `input[input.len() - end_offset]`, and advance `*cur`.
 ///
-/// Compares 8 bytes at a time, then steps down 4/2/1 bytes. Both sides are
-/// cut to one equal length up front, so the loop needs no bounds checks.
-/// `to_le` makes `trailing_zeros` count from the lowest-address mismatch.
+/// Most matches end within the next 8 bytes, so those are compared first,
+/// straight from the two slices. Longer matches continue in
+/// [`count_same_bytes_long`].
 #[inline]
 pub(crate) fn count_same_bytes(
     input: &[u8],
@@ -17,6 +17,27 @@ pub(crate) fn count_same_bytes(
 ) -> usize {
     let a = &input[*cur..input.len() - end_offset];
     let b = &source[candidate..];
+    let num = if let (Some(x), Some(y)) = (a.first_chunk::<8>(), b.first_chunk::<8>()) {
+        let diff = u64::from_ne_bytes(*x) ^ u64::from_ne_bytes(*y);
+        if diff != 0 {
+            // `to_le` makes `trailing_zeros` count from the lowest-address
+            // mismatch.
+            (diff.to_le().trailing_zeros() / 8) as usize
+        } else {
+            8 + count_same_bytes_long(&a[8..], &b[8..])
+        }
+    } else {
+        count_same_bytes_long(a, b)
+    };
+    *cur += num;
+    num
+}
+
+/// Count the common prefix of `a` and `b`: 8 bytes at a time, then 4/2/1.
+/// Both sides are cut to one length up front, so the loop needs no bounds
+/// checks.
+#[inline(never)]
+fn count_same_bytes_long(a: &[u8], b: &[u8]) -> usize {
     let n = a.len().min(b.len());
     let (a, b) = (&a[..n], &b[..n]);
 
@@ -27,9 +48,7 @@ pub(crate) fn count_same_bytes(
         let diff =
             u64::from_ne_bytes(x.try_into().unwrap()) ^ u64::from_ne_bytes(y.try_into().unwrap());
         if diff != 0 {
-            num += (diff.to_le().trailing_zeros() / 8) as usize;
-            *cur += num;
-            return num;
+            return num + (diff.to_le().trailing_zeros() / 8) as usize;
         }
         num += 8;
     }
@@ -37,9 +56,7 @@ pub(crate) fn count_same_bytes(
     if let (Some(x), Some(y)) = (ra.first_chunk::<4>(), rb.first_chunk::<4>()) {
         let diff = u32::from_ne_bytes(*x) ^ u32::from_ne_bytes(*y);
         if diff != 0 {
-            num += (diff.to_le().trailing_zeros() / 8) as usize;
-            *cur += num;
-            return num;
+            return num + (diff.to_le().trailing_zeros() / 8) as usize;
         }
         num += 4;
         (ra, rb) = (&ra[4..], &rb[4..]);
@@ -55,8 +72,6 @@ pub(crate) fn count_same_bytes(
             num += 1;
         }
     }
-
-    *cur += num;
     num
 }
 
@@ -266,5 +281,48 @@ impl<const N: usize> HashTable for HashTableU32<N> {
     #[inline]
     fn hash(bytes: u64) -> usize {
         hash_n::<N>(bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::count_same_bytes;
+
+    fn naive(input: &[u8], cur: usize, source: &[u8], candidate: usize, end: usize) -> usize {
+        input[cur..input.len() - end]
+            .iter()
+            .zip(&source[candidate..])
+            .take_while(|(a, b)| a == b)
+            .count()
+    }
+
+    #[test]
+    fn count_same_bytes_matches_naive() {
+        let mut input = [0u8; 64];
+        for (i, b) in input.iter_mut().enumerate() {
+            *b = (i * 7) as u8;
+        }
+        for src_len in [0, 3, 8, 13, 24, 48] {
+            for mismatch in 0..=src_len {
+                let mut source = [0u8; 48];
+                source[..src_len].copy_from_slice(&input[16..16 + src_len]);
+                if mismatch < src_len {
+                    source[mismatch] ^= 0xff;
+                }
+                let source = &source[..src_len];
+                for end in [0, 6] {
+                    for cand in 0..=src_len {
+                        let cur = 16 + cand;
+                        if cur > input.len() - end {
+                            continue;
+                        }
+                        let mut c = cur;
+                        let n = count_same_bytes(&input, &mut c, source, cand, end);
+                        assert_eq!(n, naive(&input, cur, source, cand, end));
+                        assert_eq!(c, cur + n);
+                    }
+                }
+            }
+        }
     }
 }
