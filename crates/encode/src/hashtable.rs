@@ -83,7 +83,6 @@ pub(crate) fn rd64_upto(src: &[u8], pos: usize, limit: usize) -> u64 {
 
 /// The first four bytes in memory of eight bytes read with [`rd64`], as
 /// [`rd32`] would read them.
-#[cfg(target_pointer_width = "32")]
 #[inline(always)]
 pub(crate) fn first4(v: u64) -> u32 {
     let b = v.to_ne_bytes();

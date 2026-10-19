@@ -3,7 +3,7 @@
 use core::fmt;
 
 use crate::hashtable::HashTable;
-use crate::hashtable::{count_same_bytes, rd32, rd64_upto};
+use crate::hashtable::{count_same_bytes, first4, rd32, rd64, rd64_upto};
 use crate::verified_sink::VerifiedSliceSink;
 #[cfg(feature = "alloc")]
 use alloc::vec;
@@ -204,6 +204,11 @@ pub(crate) fn compress_internal<
     ext_dict: &[u8],
     input_stream_offset: usize,
 ) -> Result<usize, CompressError> {
+    let input = if NEAR {
+        input
+    } else {
+        core::hint::black_box(input)
+    };
     assert!(input_pos <= input.len());
     if USE_DICT {
         assert!(ext_dict.len() <= WINDOW_SIZE);
@@ -251,7 +256,9 @@ pub(crate) fn compress_internal<
         cur = 1;
     }
 
-    let mut forward_hash = T::get_hash_at(input, cur);
+    // Eight bytes at the next search position and their hash.
+    let mut forward_bytes = rd64(input, cur);
+    let mut forward_hash = T::hash(forward_bytes);
 
     loop {
         let mut candidate;
@@ -270,14 +277,21 @@ pub(crate) fn compress_internal<
             }
 
             let hash = forward_hash;
-            // `cur` passed the exit test as the previous `next_cur` (or,
-            // after a match, the `cur <= end_pos_check` test). The assert
-            // compares against the limit already in a register and covers
-            // the read.
-            assert!(cur <= end_pos_check + 1);
-            let curr_bytes = rd32(input, cur);
+            let curr_bytes = if NEAR {
+                // `cur` passed the exit test as the previous `next_cur` (or,
+                // after a match, the `cur <= end_pos_check` test). The assert
+                // compares against the limit already in a register and
+                // covers the read; reusing `forward_bytes` would take a
+                // register.
+                assert!(cur <= end_pos_check + 1);
+                rd32(input, cur)
+            } else {
+                // Inputs over 64 KiB: reuse the bytes read for hashing.
+                first4(forward_bytes)
+            };
             candidate = table.get_at(hash);
-            forward_hash = T::get_hash_at(input, next_cur);
+            forward_bytes = rd64(input, next_cur);
+            forward_hash = T::hash(forward_bytes);
             if !READONLY {
                 table.put_at(hash, cur + input_stream_offset);
             }
@@ -303,24 +317,42 @@ pub(crate) fn compress_internal<
                 offset = (input_stream_offset + cur - candidate) as u16;
                 candidate_source = ext_dict;
                 cand_bytes = rd32(ext_dict, candidate);
-            } else if input_pos < next_cur && (NEAR || cur.wrapping_sub(input_pos) <= MAX_DISTANCE)
+            } else if input_pos < next_cur
+                && (!(HAS_OFFSET && !USE_DICT) || cur - input_pos <= MAX_DISTANCE)
             {
                 // Table entries from this stream sit below
                 // `input_stream_offset + cur`, so `input_pos < cur`;
-                // `next_cur` passed the exit test.
-                offset = (cur - input_pos) as u16;
-                candidate = input_pos;
-                candidate_source = input;
-                cand_bytes = rd32(input, input_pos);
+                // `next_cur` passed the exit test. Most candidates fail the
+                // byte compare, so the distance test comes after it. The
+                // epoch path keeps an always-true distance test up front:
+                // without it, it measured 5-10% slower at 512 B (branch
+                // misses on the staleness test).
+                if rd32(input, input_pos) == curr_bytes && (NEAR || cur - input_pos <= MAX_DISTANCE)
+                {
+                    offset = (cur - input_pos) as u16;
+                    candidate = input_pos;
+                    candidate_source = input;
+                    break;
+                }
+                cur = next_cur;
+                continue;
             } else if USE_DICT
                 && candidate >= ext_dict_stream_offset
-                && (NEAR || input_stream_offset + cur - candidate <= MAX_DISTANCE)
                 && candidate - ext_dict_stream_offset + 4 <= ext_dict.len()
             {
-                offset = (input_stream_offset + cur - candidate) as u16;
-                candidate -= ext_dict_stream_offset;
-                candidate_source = ext_dict;
-                cand_bytes = rd32(ext_dict, candidate);
+                // `candidate` sits below `input_stream_offset` here. Distance
+                // test after the byte compare, as above.
+                let dict_pos = candidate - ext_dict_stream_offset;
+                if rd32(ext_dict, dict_pos) == curr_bytes
+                    && (NEAR || input_stream_offset + cur - candidate <= MAX_DISTANCE)
+                {
+                    offset = (input_stream_offset + cur - candidate) as u16;
+                    candidate = dict_pos;
+                    candidate_source = ext_dict;
+                    break;
+                }
+                cur = next_cur;
+                continue;
             } else {
                 cur = next_cur;
                 continue;
@@ -363,13 +395,14 @@ pub(crate) fn compress_internal<
             literal_start = cur;
 
             if !USE_DICT && cur <= end_pos_check {
-                let hash = T::get_hash_at(input, cur);
+                let bytes = rd64(input, cur);
+                let hash = T::hash(bytes);
                 let rematch = table.get_at(hash);
 
                 let rc = rematch.wrapping_sub(input_stream_offset);
                 if rc < cur
+                    && first4(bytes) == rd32(input, rc)
                     && (NEAR || cur - rc <= MAX_DISTANCE)
-                    && rd32(input, cur) == rd32(input, rc)
                 {
                     table.put_at(hash, cur + input_stream_offset);
                     candidate = rc;
@@ -377,9 +410,11 @@ pub(crate) fn compress_internal<
                     offset = (cur - rc) as u16;
                     continue;
                 }
+                forward_bytes = bytes;
                 forward_hash = hash;
             } else if cur <= end_pos_check {
-                forward_hash = T::get_hash_at(input, cur);
+                forward_bytes = rd64(input, cur);
+                forward_hash = T::hash(forward_bytes);
             }
             break;
         }
@@ -943,10 +978,9 @@ pub(crate) fn compress_plain_table<const N: usize>(
 ) -> Result<usize, CompressError> {
     let offset = prepare_plain_table(table, stream_offset, input.len());
     if offset > 0 {
-        // Epoch reuse. `NEAR` would hold (inputs up to `EPOCH_THRESHOLD`),
-        // but dropping the then-redundant distance test measured 3% slower:
-        // more branch misses on the staleness test before it.
-        compress_internal::<_, false, true, false, false, _>(
+        // Epoch reuse: inputs up to `EPOCH_THRESHOLD`, and entries from
+        // earlier calls fail the `input_pos < next_cur` test.
+        compress_internal::<_, false, true, false, true, _>(
             input,
             0,
             &mut VerifiedSliceSink::new(output, 0),
