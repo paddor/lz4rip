@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Dict compression is faster on small inputs, with byte-identical output:
+  35-40% at 128-256 B, 20% at 512 B, 12% at 1 KB, and 3% at 2-16 KB on a
+  stream of different messages. `DictCompressor` and `DictCompressorRef` reuse
+  their main table across calls for inputs up to 1 KB instead of clearing it,
+  and the dict probe skips checks the dict + input < 64 KB bound already
+  covers.
+
 ## [0.11.11] - 2026-10-17
 
 ### Added

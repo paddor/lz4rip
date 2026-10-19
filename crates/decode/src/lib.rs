@@ -4,35 +4,15 @@
 #![deny(missing_docs)]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(feature = "nightly", allow(internal_features))]
-#![cfg_attr(feature = "nightly", feature(core_intrinsics))]
-// `optimize_attribute` is stable since 1.101. The gate keeps older nightlies
-// working.
-#![cfg_attr(feature = "nightly", allow(stable_features))]
-#![cfg_attr(feature = "nightly", feature(optimize_attribute))]
-// Paranoid and 32-bit builds deny unsafe code. The one exception,
-// `out::zero_init`, views a zero-filled uninitialized buffer as bytes.
-#![cfg_attr(
-    any(feature = "paranoid", target_pointer_width = "32"),
-    deny(unsafe_code)
-)]
+// Decoding is safe code. The only `unsafe` is the uninitialized-output
+// boundary: layout views between `[u8]` and `[MaybeUninit<u8>]` in `out` and
+// the uninit entry points in `decompress`, each marked
+// `#[allow(unsafe_code)]`. Paranoid and 32-bit builds keep one:
+// `out::zero_init`.
+#![deny(unsafe_code)]
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
-
-#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
-macro_rules! paranoid_unsafe_call {
-    ($e:expr) => {
-        unsafe { $e }
-    };
-}
-
-#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
-macro_rules! paranoid_unsafe_call {
-    ($e:expr) => {
-        $e
-    };
-}
 
 mod decompress;
 mod out;

@@ -1,12 +1,12 @@
 # lz4rip
 
-Fast, memory-safe LZ4 compression for Rust. On par with C lz4 throughput, with safe facade APIs over a small documented unsafe boundary.
+Fast, memory-safe LZ4 compression for Rust. Slightly ahead of C lz4's encoding throughput, with safe facade APIs over a small documented unsafe boundary.
 
 Originally derived from [lz4_flex](https://github.com/PSeitz/lz4_flex).
 
 ## Why lz4rip
 
-- **C lz4 speed, safe by construction.** Unsafe is isolated to a few internal modules for raw memory ops. See [SAFETY.md](SAFETY.md).
+- **Encodes slightly faster than C lz4, safe by construction.** Unsafe is isolated to a few internal modules for raw memory ops. See [SAFETY.md](SAFETY.md).
 - **Optional safe build.** The `paranoid` feature swaps each unchecked op for a safe twin. One `unsafe` block remains: `decompress_into_uninit` zero-fills the caller's uninitialized buffer, then views it as bytes.
 - **8 KB hash tables, or smaller.** Half the L1d footprint of C lz4 and lz4_flex by default; the table size is a compile-time const generic, so constrained targets can drop to a 2 KB, 1 KB, or 512 B table.
 - **Built-in dictionary training.** `DictTrainer` learns a dictionary from your data. No external tools needed.

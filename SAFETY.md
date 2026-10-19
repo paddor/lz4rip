@@ -3,23 +3,26 @@
 ## Unsafe boundary
 
 The `lz4rip` facade exposes safe compression and decompression APIs. The default
-build isolates unsafe code to 25 blocks in 6 modules across 3 crates. Most blocks
-perform unchecked reads or writes whose bounds are proven by safe-region margins
-computed in the algorithm code. The rest let the decoder write into
-uninitialized memory.
+build isolates unsafe code to 14 blocks in 5 modules across 3 crates. The
+encoder's blocks perform unchecked reads or writes whose bounds are proven by
+margins computed in the algorithm code. Decoding is safe code; the decoder's
+blocks only let it write into uninitialized memory.
 
 The internal hash-table trait and generic decompression entry point are not
 exported, so downstream safe code cannot construct invalid match candidates for
 unchecked encoder reads or supply a custom `Sink` whose capacity lies to the
-decoder fast path. See [DESIGN.md](DESIGN.md) for the unsafe-site inventory,
-frame-compression table invariants, and safe-region margin computation.
+decoder. See [DESIGN.md](DESIGN.md) for the unsafe-site inventory,
+frame-compression table invariants, and how the decoder's bounds checks compile
+away.
 
 ## Paranoid build
 
-The `paranoid` feature replaces each unchecked memory op with a safe twin
-(bounds-checked indexing, `copy_within`/`copy_from_slice`, `from_ne_bytes`
-reads, `chunks_exact` match counting) with the same signature, so callers are
-unchanged. `lz4rip-core`, `lz4rip-encode`, and the frame module compile with
+The `paranoid` feature replaces each unchecked encoder memory op with a safe
+twin (bounds-checked indexing, `copy_from_slice`, `from_ne_bytes` reads,
+`chunks_exact` match counting) with the same signature, so callers are
+unchanged. The decoder runs the same safe code in both builds; `paranoid` only
+makes it decode into initialized `[u8]` instead of `[MaybeUninit<u8>]`.
+`lz4rip-core`, `lz4rip-encode`, and the frame module compile with
 `forbid(unsafe_code)`. `lz4rip-decode` compiles with `deny(unsafe_code)` and one
 exception: `decompress_into_uninit` zero-fills the caller's uninitialized buffer,
 then views it as `[u8]`. Stable Rust has no safe way to make that view. The block

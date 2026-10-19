@@ -193,20 +193,28 @@ runs without file or network permissions.
 Proves decompressor bounds safety via bounded model checking. Requires
 [Kani](https://model-checking.github.io/kani/) (`cargo install --locked kani-verifier && cargo kani setup`).
 
-Nine proof harnesses in `crates/decode/src/decompress.rs` and
-`crates/decode/src/validate.rs`: three exhaustive decompression proofs, three
-fast-path margin/primitive proofs, two validator proofs, and one checked
-decoded-position proof.
+Fourteen proof harnesses in `crates/decode/src/decompress.rs` and
+`crates/decode/src/validate.rs`: three exhaustive decompression proofs, four
+fast-loop proofs (the copies stay in bounds under the loop's headroom tests),
+four general-path copy proofs (the wide copies stay in bounds under their
+guards, and the offset 2-7 pattern copy matches a byte-by-byte copy), two
+validator proofs, and one checked decoded-position proof. The decoder is safe
+code, so a failed bound would panic, not corrupt memory; the proofs show it
+cannot.
+
+Kani builds drop the general path's wide copies (`WIDE_COPIES` in
+`decompress.rs`). The exhaustive proofs' buffers are too small to reach them,
+but CBMC would still encode them and triple the formula. The general-path copy
+proofs cover them.
 
 ```sh
-# all harnesses, single-threaded (~25 min)
+# all harnesses, one at a time (~47 min, ~12 GB peak)
 cargo kani -p lz4rip-decode
-
-# all harnesses in parallel (~15 min on 6 cores)
-cargo kani -p lz4rip-decode -j 6 --output-format terse
 ```
 
-The `-j` flag requires `--output-format terse`.
+`-j N` (requires `--output-format terse`) runs N proofs side by side. The two
+six-byte exhaustive proofs and the two long literal proofs peak at 6-12 GB
+each, so budget memory for the largest N together.
 
 ## Fuzzing
 

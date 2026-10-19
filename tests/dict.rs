@@ -212,6 +212,31 @@ fn dict_compressor_ref_reuse() {
     }
 }
 
+/// Reuse across main-table epochs: inputs up to 1 KB reuse the main table,
+/// larger ones clear it, and its `u16` positions wrap every 64 KB of input.
+/// Stale entries must act like an empty table, so every block matches a fresh
+/// compressor's.
+#[test]
+fn dict_compressor_epoch_reuse_matches_fresh() {
+    let dict = json_payload(2048);
+    let corpus = json_payload(64 * 1024);
+    let mut reused = DictCompressor::new(&dict);
+    let mut reused_ref = DictCompressorRef::new(&dict);
+    let decomp = Decompressor::with_dict(&dict);
+    let sizes = [300, 700, 1024, 1500, 4096, 257, 900];
+    for i in 0..400 {
+        let size = sizes[i % sizes.len()];
+        let start = i * 997 % (corpus.len() - size);
+        let input = &corpus[start..start + size];
+        let fresh = DictCompressor::new(&dict).compress(input);
+        assert_eq!(reused.compress(input), fresh);
+        let mut out = vec![0u8; get_maximum_output_size(size)];
+        let n = reused_ref.compress_into(input, &mut out).unwrap();
+        assert_eq!(out[..n], fresh[..]);
+        assert_eq!(decomp.decompress(&fresh, size).unwrap(), input);
+    }
+}
+
 /// Dict larger than input: exercises the dual-table path where dict entries
 /// dominate the hash table.
 #[test]
