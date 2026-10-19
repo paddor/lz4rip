@@ -220,7 +220,7 @@ impl Config {
             hw_label: detect_hardware(),
             styles: vec![
                 codec("C lz4", "lz4 (C)", 0x60a5fa, 0x4680c4),
-                codec("lz4rip", "lz4rip (encapsulated unsafe)", 0xf87171, 0xc45050),
+                codec("lz4rip", "lz4rip (safe)", 0xf87171, 0xc45050),
                 codec(
                     "lz4rip paranoid",
                     "lz4rip paranoid (safe)",

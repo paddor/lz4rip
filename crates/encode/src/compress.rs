@@ -549,12 +549,12 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
             }
 
             // Main-table entries from earlier calls sit below `main_base`,
-            // entries from this call below `main_base + cur`. Dict + input fit in `u16`, so every
-            // candidate is within `MAX_DISTANCE`. Comparing against
-            // `next_cur`, which passed the exit test, lets the compiler drop
-            // the read's bounds check.
-            // The first test is redundant (`main_pos` wraps), but dropping it
-            // measured 2-3% slower: more branch misses.
+            // entries from this call below `main_base + cur`. Dict + input
+            // fit in `u16`, so every candidate is within `MAX_DISTANCE`.
+            // Comparing against `next_cur`, which passed the exit test, lets
+            // the compiler drop the read's bounds check. The first test is
+            // redundant (`main_pos` wraps), but dropping it measured 2-3%
+            // slower: more branch misses.
             let main_pos = main_candidate.wrapping_sub(main_base);
             if main_candidate >= main_base && main_pos < next_cur {
                 debug_assert!(main_pos < cur);
