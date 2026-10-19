@@ -97,6 +97,7 @@ pub struct DictCompressorN<const N: usize = DEFAULT_DICT_ENTRIES> {
     dict: Vec<u8>,
     table: HashTableU32U16<N>,
     pristine: HashTableU32U16<N>,
+    main_base: usize,
 }
 
 /// A reusable dict block compressor (owning) with the standard 8 KB tables.
@@ -133,6 +134,7 @@ impl<const N: usize> DictCompressorN<N> {
             dict: trimmed.to_vec(),
             table: HashTableU32U16::<N>::new(),
             pristine,
+            main_base: 1,
         }
     }
 
@@ -149,8 +151,9 @@ impl<const N: usize> DictCompressorN<N> {
             dict,
             table,
             pristine,
+            main_base,
         } = self;
-        compress_dict_tables(table, pristine, dict, input, output)
+        compress_dict_tables(table, pristine, main_base, dict, input, output)
     }
 
     /// Compress `input` into a new `Vec<u8>`.

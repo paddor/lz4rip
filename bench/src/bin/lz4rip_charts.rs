@@ -1790,12 +1790,26 @@ fn nice_step(max_val: f64, target_lines: usize) -> f64 {
     mag * 10.0
 }
 
+/// Log-axis ticks at 1, 2 and 5 per decade. A range too narrow for three of
+/// those gets a tick at every multiple instead.
 fn log_ticks(min_val: f64, max_val: f64) -> Vec<f64> {
+    let ticks = log_ticks_at(min_val, max_val, &[1.0, 2.0, 5.0]);
+    if ticks.len() >= 3 {
+        return ticks;
+    }
+    log_ticks_at(
+        min_val,
+        max_val,
+        &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+    )
+}
+
+fn log_ticks_at(min_val: f64, max_val: f64, mults: &[f64]) -> Vec<f64> {
     let lo = min_val.log10().floor() as i32;
     let hi = max_val.log10().ceil() as i32;
     let mut ticks = Vec::new();
     for exp in lo..=hi {
-        for mult in [1.0, 2.0, 5.0] {
+        for &mult in mults {
             let tick = mult * 10.0_f64.powi(exp);
             if min_val <= tick && tick <= max_val {
                 ticks.push(tick);

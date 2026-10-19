@@ -41,6 +41,11 @@ const INCREASE_STEPSIZE_BITSHIFT: usize = 3;
 /// virtually all matches. Skips the 8 KB table.clear() and all put_at writes.
 const DICT_READONLY_LIMIT: usize = 256;
 
+/// Dict inputs up to this size reuse the main table across calls (epoch
+/// reuse) instead of clearing it. Above it, reuse gained nothing on a stream
+/// of different messages and made repeated 8 KB text 20-30% slower.
+const DICT_EPOCH_THRESHOLD: usize = 1024;
+
 #[cfg(target_pointer_width = "32")]
 #[inline]
 fn ensure_stream_bounds(
@@ -166,6 +171,10 @@ pub(crate) fn compress_internal<
     if !HAS_OFFSET {
         debug_assert_eq!(input_stream_offset, 0);
     }
+    if READONLY {
+        debug_assert!(USE_DICT && input_stream_offset == ext_dict.len());
+        debug_assert!(ext_dict.len() + input.len() < u16::MAX as usize);
+    }
     let input_stream_offset = if HAS_OFFSET { input_stream_offset } else { 0 };
     if output.capacity() - output.pos() < get_maximum_output_size(input.len() - input_pos) {
         return Err(CompressError::OutputTooSmall);
@@ -217,7 +226,19 @@ pub(crate) fn compress_internal<
 
             debug_assert!(READONLY || candidate <= input_stream_offset + cur);
 
-            if candidate >= input_stream_offset
+            if READONLY {
+                // Only the pristine dict table: every entry is a dict
+                // position, and dict + input fit in `u16`, so it is within
+                // `MAX_DISTANCE`. The bound check covers an empty dict.
+                if candidate >= ext_dict.len() {
+                    cur = next_cur;
+                    continue;
+                }
+                debug_assert!(input_stream_offset + cur - candidate <= MAX_DISTANCE);
+                offset = (input_stream_offset + cur - candidate) as u16;
+                candidate -= ext_dict_stream_offset;
+                candidate_source = ext_dict;
+            } else if candidate >= input_stream_offset
                 && input_stream_offset + cur - candidate <= MAX_DISTANCE
             {
                 offset = (input_stream_offset + cur - candidate) as u16;
@@ -367,8 +388,10 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
     dict_table: &T,
     ext_dict: &[u8],
     input_stream_offset: usize,
+    main_base: usize,
 ) -> Result<usize, CompressError> {
     debug_assert_eq!(input_stream_offset, ext_dict.len());
+    debug_assert!(main_base + input.len() <= u16::MAX as usize);
     assert!(ext_dict.len() <= WINDOW_SIZE);
     #[cfg(target_pointer_width = "32")]
     ensure_stream_bounds(input_stream_offset, input.len(), ext_dict.len())?;
@@ -388,7 +411,7 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
     let mut literal_start = 0;
 
     let hash = paranoid_unsafe_call!(T::get_hash_at_inbounds(input, 0));
-    table.put_at(hash, input_stream_offset);
+    table.put_at(hash, main_base);
     let mut cur = 1;
 
     let mut forward_hash = paranoid_unsafe_call!(T::get_hash_at_inbounds(input, cur));
@@ -415,15 +438,16 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
                 paranoid_unsafe_call!(crate::hashtable::get_batch_inbounds(input, cur));
 
             let main_candidate = table.get_at(hash);
-            table.put_at(hash, cur + input_stream_offset);
+            table.put_at(hash, cur + main_base);
 
             // Probe dict table first: for small inputs most matches come from
             // the dict, and even for large inputs the dict covers the first
             // window of repeated structure.
             let dict_candidate = dict_table.get_at(hash);
-            if dict_candidate < input_stream_offset
-                && input_stream_offset + cur - dict_candidate <= MAX_DISTANCE
-            {
+            // Pristine entries are dict positions, and dict + input fit in
+            // `u16`, so a dict candidate is always within `MAX_DISTANCE`.
+            if dict_candidate < input_stream_offset {
+                debug_assert!(input_stream_offset + cur - dict_candidate <= MAX_DISTANCE);
                 let cand_bytes: u32 = paranoid_unsafe_call!(crate::hashtable::get_batch_inbounds(
                     ext_dict,
                     dict_candidate
@@ -436,16 +460,14 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
                 }
             }
 
-            if main_candidate >= input_stream_offset
-                && input_stream_offset + cur - main_candidate <= MAX_DISTANCE
-            {
-                let cand_bytes: u32 = paranoid_unsafe_call!(crate::hashtable::get_batch_inbounds(
-                    input,
-                    main_candidate - input_stream_offset,
-                ));
+            // Main-table entries from earlier calls sit below `main_base`.
+            if main_candidate >= main_base && main_base + cur - main_candidate <= MAX_DISTANCE {
+                let main_pos = main_candidate - main_base;
+                let cand_bytes: u32 =
+                    paranoid_unsafe_call!(crate::hashtable::get_batch_inbounds(input, main_pos));
                 if cand_bytes == curr_bytes {
-                    offset = (input_stream_offset + cur - main_candidate) as u16;
-                    candidate = main_candidate - input_stream_offset;
+                    offset = (cur - main_pos) as u16;
+                    candidate = main_pos;
                     candidate_source = input;
                     break;
                 }
@@ -475,7 +497,7 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
         ));
 
         let hash = paranoid_unsafe_call!(T::get_hash_at_inbounds(input, cur - 2));
-        table.put_at(hash, cur - 2 + input_stream_offset);
+        table.put_at(hash, cur - 2 + main_base);
 
         let token = token_from_literal_and_match_length(lit_len, duplicate_length);
         push_byte(output, token);
@@ -704,6 +726,7 @@ impl<const N: usize> CompressorRefN<N> {
 pub struct DictCompressorRefN<'a, const N: usize = DEFAULT_DICT_ENTRIES> {
     table: HashTableU32U16<N>,
     pristine: HashTableU32U16<N>,
+    main_base: usize,
     dict: &'a [u8],
 }
 
@@ -739,6 +762,7 @@ impl<'a, const N: usize> DictCompressorRefN<'a, N> {
         DictCompressorRefN {
             table: HashTableU32U16::<N>::new(),
             pristine,
+            main_base: 1,
             dict: trimmed,
         }
     }
@@ -754,6 +778,7 @@ impl<'a, const N: usize> DictCompressorRefN<'a, N> {
         compress_dict_tables(
             &mut self.table,
             &mut self.pristine,
+            &mut self.main_base,
             self.dict,
             input,
             output,
@@ -778,6 +803,7 @@ impl<'a, const N: usize> DictCompressorRefN<'a, N> {
 pub(crate) fn compress_dict_tables<const N: usize>(
     table: &mut HashTableU32U16<N>,
     pristine: &mut HashTableU32U16<N>,
+    main_base: &mut usize,
     dict: &[u8],
     input: &[u8],
     output: &mut [u8],
@@ -792,7 +818,16 @@ pub(crate) fn compress_dict_tables<const N: usize>(
             dict.len(),
         )
     } else if dict.len() + input.len() < u16::MAX as usize {
-        table.clear();
+        // Main-table positions start at `main_base`, at least 1 so a cleared
+        // table's zeros never pass as positions. Small inputs reuse the table
+        // across calls (epoch reuse): earlier calls' entries sit below
+        // `main_base`. Larger inputs clear it.
+        if input.len() > DICT_EPOCH_THRESHOLD || *main_base + input.len() > u16::MAX as usize {
+            table.clear();
+            *main_base = 1;
+        }
+        let base = *main_base;
+        *main_base += input.len();
         compress_with_dict_table(
             input,
             &mut VerifiedSliceSink::new(output, 0),
@@ -800,6 +835,7 @@ pub(crate) fn compress_dict_tables<const N: usize>(
             pristine,
             dict,
             dict.len(),
+            base,
         )
     } else {
         // dict + input >= 64 KB: positions overflow u16, so use a u32 table sized
