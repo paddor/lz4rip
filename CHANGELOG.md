@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-20
+
 ### Removed
 
 - `decompress_into_uninit`, and the `decompress_into_uninit` methods of
@@ -21,9 +23,14 @@
 - `decompress_append` and `decompress` zero-fill the new bytes before
   decoding into them: 8-14% slower on 256 B-64 KiB blocks. `decompress_into`
   is unchanged.
+- The decoder copies literal runs over 256 bytes with one exact copy instead
+  of the 32-byte loop. On rotating Silesia slices the gap to the former
+  unchecked decoder drops from 10-16% to under 4%; x-ray decodes 10-27% faster
+  from 8 KiB up.
 - The `paranoid` feature has no effect. It stays so existing feature lists
   build.
 - MSRV is 1.89.
+- Bump the JSR/WASM package to `0.2.19`.
 
 ## [0.11.12] - 2026-10-19
 

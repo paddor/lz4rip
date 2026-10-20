@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.11] - 2026-10-20
+
 ### Changed
 
 - No `unsafe` code: the crate is `#![forbid(unsafe_code)]`. Reads, the match

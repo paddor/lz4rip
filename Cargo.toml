@@ -31,8 +31,8 @@ nightly = ["lz4rip-core/nightly", "lz4rip-encode/nightly", "lz4rip-decode/nightl
 paranoid = ["lz4rip-core/paranoid", "lz4rip-encode/paranoid", "lz4rip-decode/paranoid"]
 
 [dependencies]
-lz4rip-core = { version = "0.6.0", path = "crates/core", default-features = false }
-lz4rip-encode = { version = "0.10.10", path = "crates/encode", default-features = false }
+lz4rip-core = { version = "0.6.1", path = "crates/core", default-features = false }
+lz4rip-encode = { version = "0.10.11", path = "crates/encode", default-features = false }
 lz4rip-decode = { version = "0.11.0", path = "crates/decode", default-features = false }
 twox-hash = { version = "2.0.0", default-features = false, features = ["xxhash32"], optional = true }
 
