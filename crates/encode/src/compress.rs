@@ -238,7 +238,11 @@ pub(crate) fn compress_internal<
         return Err(CompressError::OutputTooSmall);
     }
 
-    if input.len() - input_pos < LZ4_MIN_LENGTH {
+    // The first test is implied by the second, but tells the compiler
+    // `input.len() >= LZ4_MIN_LENGTH` without knowing `input_pos`. The search
+    // loop needs that to read without bounds checks when the call comes from
+    // another crate, where the compiler cannot see the arguments.
+    if input.len() < LZ4_MIN_LENGTH || input.len() - input_pos < LZ4_MIN_LENGTH {
         let left = handle_last_literals(rest, input, input_pos);
         return Ok(finish_output(out_pos, out_start, out_total, left));
     }
@@ -256,9 +260,24 @@ pub(crate) fn compress_internal<
         cur = 1;
     }
 
-    // Eight bytes at the next search position and their hash.
+    // Most paths carry the 8 bytes at the next search position and compare
+    // their first 4 from a register. Paths with a stream offset and no dict
+    // (epoch reuse, linked frame blocks) keep the offset in a register;
+    // carrying the bytes too made them spill, so they carry only the hash and
+    // read the bytes at `cur` for a candidate.
+    let carry_hash = HAS_OFFSET && !USE_DICT;
     let mut forward_bytes = rd64(input, cur);
     let mut forward_hash = T::hash(forward_bytes);
+    // The 4 bytes at `cur`, read there as `bytes`. `cur.min(next_cur)` is
+    // `cur`, and the compiler sees it is at most `next_cur`, which passed the
+    // exit test, so the read needs no bounds check.
+    let curr_bytes = |cur: usize, next_cur: usize, bytes: u64| {
+        if carry_hash {
+            rd32(input, cur.min(next_cur))
+        } else {
+            first4(bytes)
+        }
+    };
 
     loop {
         let mut candidate;
@@ -276,18 +295,11 @@ pub(crate) fn compress_internal<
                 return Ok(finish_output(out_pos, out_start, out_total, left));
             }
 
-            let hash = forward_hash;
-            let curr_bytes = if NEAR {
-                // `cur` passed the exit test as the previous `next_cur` (or,
-                // after a match, the `cur <= end_pos_check` test). The assert
-                // compares against the limit already in a register and
-                // covers the read; reusing `forward_bytes` would take a
-                // register.
-                assert!(cur <= end_pos_check + 1);
-                rd32(input, cur)
+            let bytes = forward_bytes;
+            let hash = if carry_hash {
+                forward_hash
             } else {
-                // Inputs over 64 KiB: reuse the bytes read for hashing.
-                first4(forward_bytes)
+                T::hash(bytes)
             };
             candidate = table.get_at(hash);
             forward_bytes = rd64(input, next_cur);
@@ -327,7 +339,8 @@ pub(crate) fn compress_internal<
                 // epoch path keeps an always-true distance test up front:
                 // without it, it measured 5-10% slower at 512 B (branch
                 // misses on the staleness test).
-                if rd32(input, input_pos) == curr_bytes && (NEAR || cur - input_pos <= MAX_DISTANCE)
+                if rd32(input, input_pos) == curr_bytes(cur, next_cur, bytes)
+                    && (NEAR || cur - input_pos <= MAX_DISTANCE)
                 {
                     offset = (cur - input_pos) as u16;
                     candidate = input_pos;
@@ -343,7 +356,7 @@ pub(crate) fn compress_internal<
                 // `candidate` sits below `input_stream_offset` here. Distance
                 // test after the byte compare, as above.
                 let dict_pos = candidate - ext_dict_stream_offset;
-                if rd32(ext_dict, dict_pos) == curr_bytes
+                if rd32(ext_dict, dict_pos) == curr_bytes(cur, next_cur, bytes)
                     && (NEAR || input_stream_offset + cur - candidate <= MAX_DISTANCE)
                 {
                     offset = (input_stream_offset + cur - candidate) as u16;
@@ -357,7 +370,7 @@ pub(crate) fn compress_internal<
                 cur = next_cur;
                 continue;
             }
-            if cand_bytes == curr_bytes {
+            if cand_bytes == curr_bytes(cur, next_cur, bytes) {
                 break;
             }
             cur = next_cur;
@@ -501,6 +514,7 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
     table.put_at(hash, main_base);
     let mut cur = 1;
 
+    // Hash of the bytes at the next search position.
     let mut forward_hash = T::get_hash_at(input, cur);
 
     loop {
@@ -520,10 +534,10 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
             }
 
             let hash = forward_hash;
-            // See `compress_internal`.
-            assert!(cur <= end_pos_check + 1);
-            let curr_bytes = rd32(input, cur);
             forward_hash = T::get_hash_at(input, next_cur);
+            // The 4 bytes at `cur`, read only for a candidate. See
+            // `compress_internal`.
+            let curr_bytes = || rd32(input, cur.min(next_cur));
 
             let main_candidate = table.get_at(hash);
             table.put_at(hash, cur + main_base);
@@ -540,7 +554,7 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
             // wrap).
             if dict_candidate + 4 <= ext_dict.len() {
                 debug_assert!(input_stream_offset + cur - dict_candidate <= MAX_DISTANCE);
-                if rd32(ext_dict, dict_candidate) == curr_bytes {
+                if rd32(ext_dict, dict_candidate) == curr_bytes() {
                     offset = (input_stream_offset + cur - dict_candidate) as u16;
                     candidate = dict_candidate;
                     candidate_source = ext_dict;
@@ -558,7 +572,7 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
             let main_pos = main_candidate.wrapping_sub(main_base);
             if main_candidate >= main_base && main_pos < next_cur {
                 debug_assert!(main_pos < cur);
-                if rd32(input, main_pos) == curr_bytes {
+                if rd32(input, main_pos) == curr_bytes() {
                     offset = (cur - main_pos) as u16;
                     candidate = main_pos;
                     candidate_source = input;
@@ -623,7 +637,9 @@ fn emit_sequence<'a>(
         // No length bytes. Copy 16 literal bytes regardless of the run
         // length (the offset overwrites the excess), so one length test
         // per side covers the sequence and no branch picks a copy size.
-        let src = input.get(literal_start..literal_start + 16);
+        let src = input
+            .get(literal_start..)
+            .and_then(<[u8]>::first_chunk::<16>);
         if let (Some(seq), Some(src)) = (rest.first_chunk_mut::<19>(), src) {
             seq[0] = ((lit_len as u8) << 4) | match_len as u8;
             seq[1..17].copy_from_slice(src);

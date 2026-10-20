@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Faster compression when a library crate calls the encoder, as in most
+  applications. There the compiler could not prove the search loop's reads
+  in bounds and kept their checks, so 0.10.11 compressed up to 20% slower
+  than 0.10.10. With lz4rip's bench calling it that way, against 0.10.11:
+  rotating 64 B-1 MiB slices 13-47% faster, structured messages 60-81%,
+  Silesia files 16% (geomean), and with a dictionary 26-31% at 64-256 B and
+  -3% to +5% from 512 B. Output is byte-identical.
+
 ## [0.10.11] - 2026-10-20
 
 ### Changed

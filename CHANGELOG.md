@@ -4,6 +4,11 @@
 
 ### Changed
 
+- Faster compression when a library crate calls the encoder, as in most
+  applications: `lz4rip-encode` 0.10.11 compressed up to 20% slower than
+  0.10.10 there. Against 0.12.0: rotating 64 B-1 MiB slices 13-47% faster,
+  structured messages 60-81%, Silesia files 16% (geomean), and with a
+  dictionary 26-31% at 64-256 B. Output is byte-identical.
 - `lz4rip_bench` calls the codecs through a library crate and builds with
   Cargo's default codegen units, as applications do. The x86_64 charts are
   regenerated with it.
