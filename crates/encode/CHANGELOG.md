@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.10.12] - 2026-10-20
+
+### Changed
+
+- Faster compression when a library crate calls the encoder, as in most
+  applications. There the compiler could not prove the search loop's reads
+  in bounds and kept their checks, so 0.10.11 compressed up to 20% slower
+  than 0.10.10. With lz4rip's bench calling it that way, against 0.10.11
+  (geomean per size): 64 B-8 KiB 10-26% faster, 16-32 KiB 13%, 64 KiB-1 MiB
+  2-3%, structured messages 36%, whole Silesia files 2%. With a dictionary:
+  18-23% at 64-256 B, flat (±1%) at 512 B-32 KiB, 4-7% from 64 KiB. Some
+  very compressible inputs are slower: `nci` 4-5% from 128 KiB, single
+  16-64 KiB slices of `nci`, `xml` and `reymont` 6-17%. Output is
+  byte-identical.
+
 ## [0.10.11] - 2026-10-20
 
 ### Changed

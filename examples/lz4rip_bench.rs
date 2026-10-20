@@ -2,6 +2,9 @@ extern crate libc;
 extern crate lz4_flex_unsafe;
 extern crate lz4_flex_upstream;
 
+// Codecs are called through a library crate, as in applications. See
+// `crates/bench-app`.
+use lz4rip_bench_app as app;
 use std::io::Write;
 use std::os::raw::c_int;
 use std::path::PathBuf;
@@ -141,19 +144,19 @@ fn bench_loop<F: FnMut()>(warmup: usize, target_ns: u64, rounds: usize, mut f: F
 fn bench_lz4rip(data: &[u8], name: &str, target_ns: u64) -> BenchResult {
     let max_out = lz4rip::block::get_maximum_output_size(data.len());
     let mut comp_buf = vec![0u8; max_out];
-    let comp_len = lz4rip::block::compress_into(data, &mut comp_buf).unwrap();
+    let comp_len = app::lz4rip::compress_into(data, &mut comp_buf).unwrap();
     let compressed = comp_buf[..comp_len].to_vec();
     let mut decomp_buf = vec![0u8; data.len()];
 
     let compress_ns = bench_loop(3, target_ns, 10, || {
-        let _ = lz4rip::block::compress_into(
+        let _ = app::lz4rip::compress_into(
             std::hint::black_box(data),
             std::hint::black_box(&mut comp_buf),
         );
     });
 
     let decompress_ns = bench_loop(3, target_ns, 10, || {
-        let _ = lz4rip::block::decompress_into(
+        let _ = app::lz4rip::decompress_into(
             std::hint::black_box(&compressed),
             std::hint::black_box(&mut decomp_buf),
         );
@@ -172,19 +175,19 @@ fn bench_lz4rip(data: &[u8], name: &str, target_ns: u64) -> BenchResult {
 fn bench_lz4_flex_upstream(data: &[u8], name: &str, target_ns: u64) -> BenchResult {
     let max_out = lz4_flex_upstream::block::get_maximum_output_size(data.len());
     let mut comp_buf = vec![0u8; max_out];
-    let comp_len = lz4_flex_upstream::block::compress_into(data, &mut comp_buf).unwrap();
+    let comp_len = app::lz4_flex::compress_into(data, &mut comp_buf).unwrap();
     let compressed = comp_buf[..comp_len].to_vec();
     let mut decomp_buf = vec![0u8; data.len()];
 
     let compress_ns = bench_loop(3, target_ns, 10, || {
-        let _ = lz4_flex_upstream::block::compress_into(
+        let _ = app::lz4_flex::compress_into(
             std::hint::black_box(data),
             std::hint::black_box(&mut comp_buf),
         );
     });
 
     let decompress_ns = bench_loop(3, target_ns, 10, || {
-        let _ = lz4_flex_upstream::block::decompress_into(
+        let _ = app::lz4_flex::decompress_into(
             std::hint::black_box(&compressed),
             std::hint::black_box(&mut decomp_buf),
         );
@@ -203,19 +206,19 @@ fn bench_lz4_flex_upstream(data: &[u8], name: &str, target_ns: u64) -> BenchResu
 fn bench_lz4_flex_unsafe(data: &[u8], name: &str, target_ns: u64) -> BenchResult {
     let max_out = lz4_flex_unsafe::block::get_maximum_output_size(data.len());
     let mut comp_buf = vec![0u8; max_out];
-    let comp_len = lz4_flex_unsafe::block::compress_into(data, &mut comp_buf).unwrap();
+    let comp_len = app::lz4_flex_unsafe::compress_into(data, &mut comp_buf).unwrap();
     let compressed = comp_buf[..comp_len].to_vec();
     let mut decomp_buf = vec![0u8; data.len()];
 
     let compress_ns = bench_loop(3, target_ns, 10, || {
-        let _ = lz4_flex_unsafe::block::compress_into(
+        let _ = app::lz4_flex_unsafe::compress_into(
             std::hint::black_box(data),
             std::hint::black_box(&mut comp_buf),
         );
     });
 
     let decompress_ns = bench_loop(3, target_ns, 10, || {
-        let _ = lz4_flex_unsafe::block::decompress_into(
+        let _ = app::lz4_flex_unsafe::decompress_into(
             std::hint::black_box(&compressed),
             std::hint::black_box(&mut decomp_buf),
         );
@@ -265,13 +268,13 @@ fn bench_c_lz4(data: &[u8], name: &str, target_ns: u64) -> BenchResult {
 }
 
 fn bench_lz4rip_dict(data: &[u8], dict: &[u8], name: &str, target_ns: u64) -> BenchResult {
-    let mut compressor = lz4rip::block::DictCompressor::new(dict);
+    let mut compressor = app::lz4rip::DictCompressor::new(dict);
     let max_out = lz4rip::block::get_maximum_output_size(data.len());
     let mut comp_buf = vec![0u8; max_out];
     let comp_len = compressor.compress_into(data, &mut comp_buf).unwrap();
     let compressed = comp_buf[..comp_len].to_vec();
 
-    let decompressor = lz4rip::block::Decompressor::with_dict(dict);
+    let decompressor = app::lz4rip::Decompressor::with_dict(dict);
     let mut decomp_buf = vec![0u8; data.len()];
     let check = decompressor
         .decompress_into(&compressed, &mut decomp_buf)
@@ -588,8 +591,8 @@ const SWEEP_SIZES: &[usize] = &[
 
 fn run_sweep(dict: &[u8], inputs: &[(String, Vec<u8>)]) {
     let target_ns = 20_000_000u64;
-    let mut compressor = lz4rip::block::DictCompressor::new(dict);
-    let decompressor = lz4rip::block::Decompressor::with_dict(dict);
+    let mut compressor = app::lz4rip::DictCompressor::new(dict);
+    let decompressor = app::lz4rip::Decompressor::with_dict(dict);
 
     let stream = unsafe { LZ4_createStream() };
     assert!(!stream.is_null());
@@ -610,16 +613,16 @@ fn run_sweep(dict: &[u8], inputs: &[(String, Vec<u8>)]) {
 
             // lz4rip (no dict)
             {
-                let comp_len = lz4rip::block::compress_into(&data, &mut comp_buf).unwrap();
+                let comp_len = app::lz4rip::compress_into(&data, &mut comp_buf).unwrap();
                 let compressed = comp_buf[..comp_len].to_vec();
                 let compress_ns = bench_loop(3, target_ns, 10, || {
-                    let _ = lz4rip::block::compress_into(
+                    let _ = app::lz4rip::compress_into(
                         std::hint::black_box(&data),
                         std::hint::black_box(&mut comp_buf),
                     );
                 });
                 let decompress_ns = bench_loop(3, target_ns, 10, || {
-                    let _ = lz4rip::block::decompress_into(
+                    let _ = app::lz4rip::decompress_into(
                         std::hint::black_box(&compressed),
                         std::hint::black_box(&mut decomp_buf),
                     );
@@ -821,7 +824,7 @@ fn bench_c_lz4_stream(data: &[u8], name: &str, target_ns: u64) -> BenchResult {
 /// clear for inputs up to 8 KB.
 fn bench_lz4rip_compressor(data: &[u8], name: &str, codec: &str, target_ns: u64) -> BenchResult {
     let max_out = lz4rip::block::get_maximum_output_size(data.len());
-    let mut compressor = lz4rip::block::Compressor::new();
+    let mut compressor = app::lz4rip::Compressor::new();
     let mut comp_buf = vec![0u8; max_out];
     let comp_len = compressor.compress_into(data, &mut comp_buf).unwrap();
     let compressed = comp_buf[..comp_len].to_vec();
@@ -835,7 +838,7 @@ fn bench_lz4rip_compressor(data: &[u8], name: &str, codec: &str, target_ns: u64)
     });
 
     let decompress_ns = bench_loop(3, target_ns, 10, || {
-        let _ = lz4rip::block::decompress_into(
+        let _ = app::lz4rip::decompress_into(
             std::hint::black_box(&compressed),
             std::hint::black_box(&mut decomp_buf),
         );
@@ -897,13 +900,13 @@ fn small_encode(codec: &str, slices: &[&[u8]], target_ns: u64) -> (f64, Vec<Vec<
             (ns, blocks)
         }
         "lz4_flex unsafe" => time_encode(slices, &mut out, target_ns, |d, o| {
-            lz4_flex_unsafe::block::compress_into(d, o).unwrap()
+            app::lz4_flex_unsafe::compress_into(d, o).unwrap()
         }),
         "lz4_flex" => time_encode(slices, &mut out, target_ns, |d, o| {
-            lz4_flex_upstream::block::compress_into(d, o).unwrap()
+            app::lz4_flex::compress_into(d, o).unwrap()
         }),
         _ => {
-            let mut compressor = lz4rip::block::Compressor::new();
+            let mut compressor = app::lz4rip::Compressor::new();
             time_encode(slices, &mut out, target_ns, |d, o| {
                 compressor.compress_into(d, o).unwrap()
             })
@@ -941,13 +944,13 @@ fn small_decode(codec: &str, blocks: &[Vec<u8>], slices: &[&[u8]], target_ns: u6
             lzzzz::lz4::decompress(b, o).unwrap()
         }),
         "lz4_flex unsafe" => time_decode(codec, blocks, slices, target_ns, |b, o| {
-            lz4_flex_unsafe::block::decompress_into(b, o).unwrap()
+            app::lz4_flex_unsafe::decompress_into(b, o).unwrap()
         }),
         "lz4_flex" => time_decode(codec, blocks, slices, target_ns, |b, o| {
-            lz4_flex_upstream::block::decompress_into(b, o).unwrap()
+            app::lz4_flex::decompress_into(b, o).unwrap()
         }),
         _ => time_decode(codec, blocks, slices, target_ns, |b, o| {
-            lz4rip::block::decompress_into(b, o).unwrap()
+            app::lz4rip::decompress_into(b, o).unwrap()
         }),
     }
 }
@@ -1071,8 +1074,8 @@ fn run_structured_dict(only: &[String], inputs: &[(String, Vec<u8>)], dict: &[u8
     let target_ns = 20_000_000u64;
     let dict_codecs: &[&str] = &["C lz4 (dict 2K)", "lz4rip (dict 2K)"];
 
-    let mut compressor = lz4rip::block::DictCompressor::new(dict);
-    let decompressor = lz4rip::block::Decompressor::with_dict(dict);
+    let mut compressor = app::lz4rip::DictCompressor::new(dict);
+    let decompressor = app::lz4rip::Decompressor::with_dict(dict);
 
     let stream = unsafe { LZ4_createStream() };
     assert!(!stream.is_null());

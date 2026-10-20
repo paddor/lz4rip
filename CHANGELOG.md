@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-10-20
+
+### Changed
+
+- Faster compression when a library crate calls the encoder, as in most
+  applications: `lz4rip-encode` 0.10.11 compressed up to 20% slower than
+  0.10.10 there. Against 0.12.0 (geomean per size): 64 B-8 KiB 10-26%
+  faster, 16-32 KiB 13%, 64 KiB-1 MiB 2-3%, structured messages 36%, whole
+  Silesia files 2%. With a dictionary: 18-23% at 64-256 B, flat (±1%) at
+  512 B-32 KiB, 4-7% from 64 KiB. Some very compressible inputs are slower:
+  `nci` 4-5% from 128 KiB, single 16-64 KiB slices of `nci`, `xml` and
+  `reymont` 6-17%. Output is byte-identical.
+- `lz4rip_bench` calls the codecs through a library crate and builds with
+  Cargo's default codegen units, as applications do. The x86_64 charts are
+  regenerated with it.
+
 ## [0.12.0] - 2026-10-20
 
 ### Removed
