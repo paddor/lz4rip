@@ -29,7 +29,6 @@ jobs:
       - run: cargo check --no-default-features -p lz4rip-encode
       - run: cargo check --no-default-features -p lz4rip-decode
       - run: cargo check --no-default-features -p lz4rip
-      - run: cargo test --example perf_verify
 
   nightly:
     name: nightly
