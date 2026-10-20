@@ -116,9 +116,14 @@ Encoder search loops:
   lie below `next_cur`, which just passed the loop's exit test. A dict
   candidate needs `candidate + 4 <= dict.len()`: it is a `u16`, so the add
   cannot wrap, and `init_dict` stores only positions with 8 readable bytes.
-- The 4 bytes at `cur` come from `assert!(cur <= limit)` and a plain read.
-  Inputs over 64 KiB have spare registers and reuse the 8 bytes read for
-  hashing.
+- The search loop carries the 8 bytes at the next position and compares
+  their first 4 from a register. Paths with a stream offset and no dict
+  (epoch reuse, linked frame blocks) and the dict loop carry only the hash.
+  They read the 4 bytes at `cur` only for a candidate, at `cur.min(next_cur)`,
+  which the compiler sees is bounded by the exit test.
+- A test of `input.len()` alone gives the reads their length bound. Called
+  from another crate, the compiler cannot see `input_pos`, and the test of
+  `input.len() - input_pos` does not give it.
 - `NEAR` inputs skip the distance test, so `input_pos < next_cur` is the only
   candidate test. Elsewhere the distance test follows the byte compare.
 - On inputs over 64 KiB, the caller's dispatch gives LLVM a length range, and
