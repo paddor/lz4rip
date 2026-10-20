@@ -15,6 +15,12 @@ echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governo
 
 Pin to a single core with `taskset -c 0` to avoid cross-core migration noise.
 
+The bench builds lz4rip the way applications do. The release profile keeps
+Cargo's default codegen units, and the bench calls the generic compressors
+through `crates/bench-app`, a library crate. Compiled in the bench binary,
+the encoder would be specialized on the bench's own arguments, and its
+results would not match what applications get.
+
 All chart commands require `LZ4RIP_HW_EXTRAS` to inject the governor/turbo subtitle
 on systems where sysfs is unavailable (or when the governor was not changed before
 running). Always set it:

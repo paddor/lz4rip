@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/core", "crates/encode", "crates/decode"]
+members = [".", "crates/core", "crates/encode", "crates/decode", "crates/bench-app"]
 exclude = ["bench"]
 resolver = "3"
 
@@ -37,6 +37,7 @@ lz4rip-decode = { version = "0.11.0", path = "crates/decode", default-features =
 twox-hash = { version = "2.0.0", default-features = false, features = ["xxhash32"], optional = true }
 
 [dev-dependencies]
+lz4rip-bench-app = { path = "crates/bench-app" }
 more-asserts = "0.3.1"
 snap = "1.1.0"
 proptest = "1.0.0"
@@ -62,7 +63,6 @@ lto = true
 opt-level = 3
 
 [profile.release]
-codegen-units = 1
 opt-level = 3
 panic = "unwind"
 

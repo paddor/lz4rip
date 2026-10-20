@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `lz4rip_bench` calls the codecs through a library crate and builds with
+  Cargo's default codegen units, as applications do. The x86_64 charts are
+  regenerated with it.
+
 ## [0.12.0] - 2026-10-20
 
 ### Removed
