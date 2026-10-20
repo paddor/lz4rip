@@ -61,6 +61,7 @@
 //!
 #![deny(warnings)]
 #![deny(missing_docs)]
+#![forbid(unsafe_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -69,8 +70,8 @@
 /// See the [spec](https://github.com/lz4/lz4/blob/dev/doc/lz4_Block_format.md).
 ///
 /// Without the `alloc` feature, [`decompress_into`],
-/// [`decompress_into_uninit`], [`decompress_into_with_dict`],
-/// [`validate_block`], [`validate_block_with_dict`], and
+/// [`decompress_into_with_dict`], [`validate_block`],
+/// [`validate_block_with_dict`], and
 /// [`DecompressorRef`](block::DecompressorRef) remain available.
 ///
 /// # Example: block format roundtrip
@@ -84,8 +85,8 @@
 pub mod block {
     pub use lz4rip_core::{CompressError, DecompressError};
     pub use lz4rip_decode::{
-        BlockValidation, DecompressorRef, decompress_into, decompress_into_uninit,
-        decompress_into_with_dict, validate_block, validate_block_with_dict,
+        BlockValidation, DecompressorRef, decompress_into, decompress_into_with_dict,
+        validate_block, validate_block_with_dict,
     };
     pub use lz4rip_encode::{
         CompressorRef, CompressorRefN, DEFAULT_DICT_ENTRIES, DEFAULT_NODICT_ENTRIES,
@@ -108,8 +109,8 @@ pub mod frame;
 #[cfg(feature = "alloc")]
 pub use block::{compress, decompress, decompress_append};
 pub use block::{
-    compress_into, compress_into_with_dict, decompress_into, decompress_into_uninit,
-    decompress_into_with_dict, get_maximum_output_size, validate_block, validate_block_with_dict,
+    compress_into, compress_into_with_dict, decompress_into, decompress_into_with_dict,
+    get_maximum_output_size, validate_block, validate_block_with_dict,
 };
 
 #[cfg(test)]
@@ -186,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn miri_wildcopy_roundtrip() {
+    fn wildcopy_roundtrip() {
         let mut state: u64 = 0x1234_5678_9abc_def1;
         let mut rng = || {
             state ^= state << 13;

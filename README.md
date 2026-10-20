@@ -1,20 +1,19 @@
 # lz4rip
 
-Fast, memory-safe LZ4 compression for Rust. Slightly ahead of C lz4's encoding throughput, with safe facade APIs over a small documented unsafe boundary.
+Fast LZ4 compression for Rust with no `unsafe`. Slightly ahead of C lz4's encoding throughput.
 
 Originally derived from [lz4_flex](https://github.com/PSeitz/lz4_flex).
 
 ## Why lz4rip
 
-- **Encodes slightly faster than C lz4, safe by construction.** Unsafe is isolated to a few internal modules for raw memory ops. See [SAFETY.md](SAFETY.md).
-- **Optional safe build.** The `paranoid` feature swaps each unchecked op for a safe twin. One `unsafe` block remains: `decompress_into_uninit` zero-fills the caller's uninitialized buffer, then views it as bytes.
+- **Encodes slightly faster than C lz4, with no `unsafe`.** Every crate is `#![forbid(unsafe_code)]`. See [SAFETY.md](SAFETY.md).
 - **8 KB hash tables, or smaller.** Half the L1d footprint of C lz4 and lz4_flex by default; the table size is a compile-time const generic, so constrained targets can drop to a 2 KB, 1 KB, or 512 B table.
 - **Built-in dictionary training.** `DictTrainer` learns a dictionary from your data. No external tools needed.
 - **Hot-loop friendly.** Epoch-based table reuse skips clearing between calls for small inputs.
 - **`no_std` and no-alloc ready.** Block format works without `std` or even `alloc`. Hash tables live on the stack when `alloc` is off. Frame format requires `std`.
 - **32-bit Linux.** `i686-unknown-linux-gnu` and
-  `armv7-unknown-linux-gnueabihf` are tested via the safe/paranoid internals.
-  Streams and frames are bounded by platform address-space limits.
+  `armv7-unknown-linux-gnueabihf` are tested in CI. Streams and frames are
+  bounded by platform address-space limits.
 - **WebAssembly.** Available as [`@paddor/lz4rip`](https://jsr.io/@paddor/lz4rip) on JSR. Block compress and decompress, dictionaries.
 
 See [DESIGN.md](DESIGN.md) for how it all works.
@@ -68,9 +67,7 @@ assert_eq!(&output[..n], input);
 The `_into` variants write into a caller-provided buffer. The plain variants
 allocate and require the `alloc` feature.
 
-To skip zero-filling the output, decode into uninitialized memory.
-`decompress_append` appends to a `Vec` through its spare capacity, and
-`decompress_into_uninit` takes `&mut [MaybeUninit<u8>]`:
+`decompress_append` appends to a `Vec`:
 
 ```rust
 use lz4rip::block::{compress, decompress_append};
@@ -149,9 +146,7 @@ table-size knob. The const-generic approach here lets you monomorphize different
 sizes in the same binary (e.g. 512 B for telemetry, 8 KB for bulk) with zero
 runtime cost.
 
-For a build without unchecked memory ops, add the `paranoid` feature (see
-[SAFETY.md](SAFETY.md)). It composes with `no_std`, no-alloc, and the table-size
-knob.
+One-shot block compression works without `alloc`:
 
 ```rust
 use lz4rip::block::{compress_into, decompress_into, get_maximum_output_size};
@@ -277,12 +272,11 @@ let compressed = encoder.finish().unwrap();
 
 ## Safety
 
-[SAFETY.md](SAFETY.md) documents the unsafe boundary and catalogs C lz4 memory safety bugs that Rust prevents by construction.
+[SAFETY.md](SAFETY.md) describes how lz4rip stays fast without `unsafe` and catalogs C lz4 memory safety bugs that Rust prevents by construction.
 
 All codec paths are fuzz-tested (12 targets covering block and frame round-trip,
 dictionary round-trip, corruption resistance, cross-validation against C lz4,
-output-leak detection, bitflips, crafted tokens, and tiny hash tables) and
-verified under Miri on both x86_64 and aarch64.
+output-leak detection, bitflips, crafted tokens, and tiny hash tables).
 
 ## Development
 

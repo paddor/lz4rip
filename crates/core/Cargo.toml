@@ -1,9 +1,9 @@
 [package]
 name = "lz4rip-core"
 description = "Shared types and constants for lz4rip encode/decode crates."
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/paddor/lz4rip"
 readme = "README.md"
@@ -12,8 +12,8 @@ readme = "README.md"
 default = ["std"]
 std = []
 nightly = []
-# Core is already `#![forbid(unsafe_code)]`; this flag exists only to propagate
-# from the facade and encode/decode crates.
+# No effect today: every build is safe Rust. Kept so existing feature lists
+# build, and to keep any future `unsafe` out of builds that enable it.
 paranoid = []
 
 [dev-dependencies]

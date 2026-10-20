@@ -37,7 +37,6 @@ fn mutation_success_still_implies_exact_decompression() {
 
 proptest! {
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn every_compressed_block_validates(input in proptest::collection::vec(any::<u8>(), 0..2048)) {
         let compressed = compress(&input);
         let validation = validate_block(&compressed, input.len()).unwrap();
@@ -50,7 +49,6 @@ proptest! {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn every_dict_compressed_block_validates(
         input in proptest::collection::vec(any::<u8>(), 0..2048),
         dict in proptest::collection::vec(any::<u8>(), 0..512),
@@ -67,7 +65,6 @@ proptest! {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn validation_success_implies_decompression_success(
         encoded in proptest::collection::vec(any::<u8>(), 0..128),
         expected in 0usize..512,
@@ -80,7 +77,6 @@ proptest! {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn dict_validation_success_implies_decompression_success(
         encoded in proptest::collection::vec(any::<u8>(), 0..128),
         expected in 0usize..512,

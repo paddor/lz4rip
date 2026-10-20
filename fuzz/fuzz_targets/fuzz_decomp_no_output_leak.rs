@@ -1,10 +1,6 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use std::mem::MaybeUninit;
-
-use lz4rip::block::{
-    decompress_append, decompress_into, decompress_into_uninit, DecompressError, Decompressor,
-};
+use lz4rip::block::{decompress_append, decompress_into, DecompressError, Decompressor};
 
 #[derive(Debug, arbitrary::Arbitrary)]
 struct FuzzData {
@@ -31,19 +27,6 @@ fuzz_target!(|fuzz_data: FuzzData| {
         }
     }
 
-    fn decompress_uninit(
-        input: &[u8],
-        output: &mut [MaybeUninit<u8>],
-        dict: &[u8],
-    ) -> Result<Vec<u8>, DecompressError> {
-        let out = if dict.is_empty() {
-            decompress_into_uninit(input, output)?
-        } else {
-            Decompressor::with_dict(dict).decompress_into_uninit(input, output)?
-        };
-        Ok(out.to_vec())
-    }
-
     fn append(
         input: &[u8],
         output: &mut Vec<u8>,
@@ -60,11 +43,6 @@ fuzz_target!(|fuzz_data: FuzzData| {
     // First decompress: zero-filled buffer.
     let mut output1 = vec![0u8; buf_size];
     let result1 = decompress(input, &mut output1, &dict).map(|len| output1[..len].to_owned());
-
-    // Uninitialized buffer. Same result, including errors.
-    let mut uninit = Vec::with_capacity(buf_size);
-    let result_uninit = decompress_uninit(input, &mut uninit.spare_capacity_mut()[..buf_size], &dict);
-    assert_eq!(result1, result_uninit);
 
     // Append after existing bytes. Same result. On error, the vec is unchanged.
     let prefix = [0x55u8; 7];

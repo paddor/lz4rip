@@ -206,7 +206,6 @@ fn frames(dict: Option<&[u8]>) -> Frames {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn reused_frame_decoder_matches_fresh_after_valid_frames() {
     let dict = dict();
     for dict in [None, Some(&dict[..])] {
@@ -217,7 +216,6 @@ fn reused_frame_decoder_matches_fresh_after_valid_frames() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn reused_frame_decoder_matches_fresh_after_malformed_frames() {
     let dict = dict();
     for dict in [None, Some(&dict[..])] {
@@ -236,7 +234,6 @@ fn reused_frame_decoder_matches_fresh_after_malformed_frames() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn concatenated_frames_decode_like_separate_frames() {
     let dict = dict();
     for dict in [None, Some(&dict[..])] {
@@ -258,7 +255,6 @@ fn concatenated_frames_decode_like_separate_frames() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn frame_start_does_not_reach_previous_frame_history() {
     let dict = dict();
     for dict in [None, Some(&dict[..])] {
@@ -279,7 +275,6 @@ fn frame_start_does_not_reach_previous_frame_history() {
 }
 
 #[test]
-#[cfg_attr(miri, ignore)]
 fn retry_after_block_error_does_not_resume_the_frame() {
     let data = multi_block_payload();
     let info = FrameInfo::new()

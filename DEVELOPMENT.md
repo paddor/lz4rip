@@ -16,7 +16,7 @@ cargo run --release --example perf_verify
 The gate requires an ignored `.perf_hw` file in the working directory. It
 fails on missing, duplicate, unknown, incomplete, nonpositive, or nonfinite
 limits. A missing file never silently downgrades verification to a smoke test.
-Debug and `paranoid` builds are rejected because their CPU budgets differ.
+Debug builds are rejected because their CPU budgets differ.
 
 Each case rotates 64 distinct deterministic buffers through a reused
 compressor and reused output allocation. Families: JSON log records,
@@ -87,16 +87,14 @@ on first run. It writes results to `~/.cache/lz4rip/<arch>/` (and subdirs for
 sweep/structured). Chart generation reads from cache. Two separate steps, no
 piping.
 
-Bench all impls (including paranoid) and generate all charts:
+Bench all impls and generate all charts:
 ```sh
 taskset -c 0 cargo run --release --example lz4rip_bench
-taskset -c 0 cargo run --release --example lz4rip_bench --features paranoid
 taskset -c 0 cargo run --release --example lz4rip_bench -- --dict-silesia
 taskset -c 0 cargo run --release --example lz4rip_bench -- --structured
 taskset -c 0 cargo run --release --example lz4rip_bench -- --structured-dict
 taskset -c 0 cargo run --release --example lz4rip_bench -- --sweep
 taskset -c 0 cargo run --release --example lz4rip_bench -- --small
-taskset -c 0 cargo run --release --example lz4rip_bench --features paranoid -- --small --impl lz4rip
 cargo run --manifest-path bench/Cargo.toml --bin lz4rip_charts -- all doc/charts/x86_64
 ```
 
@@ -128,22 +126,6 @@ postfix=performance governor, turbo off
 The chart tool reads `.chart_hw` from the current dir or parent dir. Env vars
 `LZ4RIP_HW_PREFIX`, `LZ4RIP_HW_POSTFIX`, and `LZ4RIP_HW_EXTRAS` override or
 extend local detection.
-
-## Miri
-
-Checks unsafe code for undefined behavior (Stacked Borrows violations, use-after-free, etc.).
-
-```sh
-# unit tests only (~2 min)
-MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test --lib
-
-# unit + integration tests (~20 min)
-# C FFI tests (cpp_compat.rs) are excluded via #![cfg(not(miri))].
-# Large corpus tests (dickens, proptest) are excluded via #[cfg_attr(miri, ignore)].
-MIRIFLAGS="-Zmiri-disable-isolation" cargo +nightly miri test
-```
-
-`-Zmiri-disable-isolation` is needed because proptest calls `getcwd`.
 
 ## Releasing
 
@@ -187,34 +169,6 @@ deno task test
 Use Deno 2.8.3 or newer for the bundled tests. They cover standalone bundles,
 synchronous bytes, and initialization races. Bundled default initialization
 runs without file or network permissions.
-
-## Kani
-
-Proves decompressor bounds safety via bounded model checking. Requires
-[Kani](https://model-checking.github.io/kani/) (`cargo install --locked kani-verifier && cargo kani setup`).
-
-Fourteen proof harnesses in `crates/decode/src/decompress.rs` and
-`crates/decode/src/validate.rs`: three exhaustive decompression proofs, four
-fast-loop proofs (the copies stay in bounds under the loop's headroom tests),
-four general-path copy proofs (the wide copies stay in bounds under their
-guards, and the offset 2-7 pattern copy matches a byte-by-byte copy), two
-validator proofs, and one checked decoded-position proof. The decoder is safe
-code, so a failed bound would panic, not corrupt memory; the proofs show it
-cannot.
-
-Kani builds drop the general path's wide copies (`WIDE_COPIES` in
-`decompress.rs`). The exhaustive proofs' buffers are too small to reach them,
-but CBMC would still encode them and triple the formula. The general-path copy
-proofs cover them.
-
-```sh
-# all harnesses, one at a time (~47 min, ~12 GB peak)
-cargo kani -p lz4rip-decode
-```
-
-`-j N` (requires `--output-format terse`) runs N proofs side by side. The two
-six-byte exhaustive proofs and the two long literal proofs peak at 6-12 GB
-each, so budget memory for the largest N together.
 
 ## Fuzzing
 

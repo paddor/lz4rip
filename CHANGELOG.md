@@ -2,6 +2,36 @@
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-20
+
+### Removed
+
+- `decompress_into_uninit`, and the `decompress_into_uninit` methods of
+  `DecompressorRef` and `Decompressor`. Safe Rust has no stable way to view a
+  filled `[MaybeUninit<u8>]` as `[u8]`. Use `decompress_into` or
+  `decompress_append`. This is a breaking change: `lz4rip` `0.12.0`,
+  `lz4rip-decode` `0.11.0`.
+
+### Changed
+
+- No `unsafe` code: every crate is `#![forbid(unsafe_code)]`. The encoder's
+  reads, match counter, and output writes are safe code, and its output is
+  byte-identical. Compression time against 0.11.12: Silesia corpus 0.7%
+  slower, rotating 2-64 KiB slices 1.5-3% faster, 128 KiB-1 MiB 2.7% slower,
+  512 B-1 KiB 7-9% slower, repeated 512 B-4 KiB messages with a dictionary
+  5-6.5% slower.
+- `decompress_append` and `decompress` zero-fill the new bytes before
+  decoding into them: 8-14% slower on 256 B-64 KiB blocks. `decompress_into`
+  is unchanged.
+- The decoder copies literal runs over 256 bytes with one exact copy instead
+  of the 32-byte loop. On rotating Silesia slices the gap to the former
+  unchecked decoder drops from 10-16% to under 4%; x-ray decodes 10-27% faster
+  from 8 KiB up.
+- The `paranoid` feature has no effect. It stays so existing feature lists
+  build.
+- MSRV is 1.89.
+- Bump the JSR/WASM package to `0.2.19`.
+
 ## [0.11.12] - 2026-10-19
 
 ### Changed

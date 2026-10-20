@@ -32,7 +32,6 @@ const INCOMPRESSIBLE: &[&str] = &["mr", "sao", "x-ray"];
 const MAIN_CODEC_ORDER: &[&str] = &[
     "C lz4",
     "lz4rip",
-    "lz4rip paranoid",
     "lz4_flex unsafe",
     "lz4_flex",
 ];
@@ -46,7 +45,6 @@ const SMALL_ENCODE_CODEC_ORDER: &[&str] = &["C lz4", "lz4rip", "lz4_flex unsafe"
 const SMALL_DECODE_CODEC_ORDER: &[&str] = &[
     "C lz4",
     "lz4rip",
-    "lz4rip paranoid",
     "lz4_flex unsafe",
     "lz4_flex",
 ];
@@ -220,13 +218,7 @@ impl Config {
             hw_label: detect_hardware(),
             styles: vec![
                 codec("C lz4", "lz4 (C)", 0x60a5fa, 0x4680c4),
-                codec("lz4rip", "lz4rip (encapsulated unsafe)", 0xf87171, 0xc45050),
-                codec(
-                    "lz4rip paranoid",
-                    "lz4rip paranoid (safe)",
-                    0xf472b6,
-                    0xc05a92,
-                ),
+                codec("lz4rip", "lz4rip (safe)", 0xf87171, 0xc45050),
                 codec("lz4_flex unsafe", "lz4_flex (unsafe)", 0xf59e0b, 0xc47d08),
                 codec("lz4_flex", "lz4_flex (safe)", 0x4ade80, 0x3aaf60),
                 codec("C lz4 (dict 2K)", "lz4 (C, dict)", 0x60a5fa, 0x4680c4),
@@ -512,11 +504,12 @@ fn draw_summary(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
     draw_y_grid(&area, x_left, x_right, p_top, p_bot, y_max, false)?;
 
     let group_w = plot_w / groups.len() as f64;
-    let bar_w = (group_w * 0.7 / codecs.len() as f64).min(50.0);
-    let inner_gap = bar_w * 0.15;
+    let bar_w = (group_w * 0.7 / codecs.len() as f64).min(50.0).round();
+    // Whole-pixel pitch, so every gap in a group rounds to the same width.
+    let bar_step = (bar_w + bar_w * 0.15 / codecs.len() as f64).round();
     let group_gap = group_w * 0.2;
     for (gi, (group, _)) in groups.iter().enumerate() {
-        let group_x = x_left + gi as f64 * group_w + group_gap / 2.0;
+        let group_x = (x_left + gi as f64 * group_w + group_gap / 2.0).round();
         for (ci, codec) in codecs.iter().enumerate() {
             let Some(parts) = group_data.get(&((*group).to_string(), (*codec).to_string())) else {
                 continue;
@@ -526,7 +519,7 @@ fn draw_summary(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
             };
             draw_stack(
                 &area,
-                group_x + ci as f64 * (bar_w + inner_gap / codecs.len() as f64),
+                group_x + ci as f64 * bar_step,
                 bar_w,
                 p_top,
                 p_bot,

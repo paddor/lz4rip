@@ -4,8 +4,7 @@
 
 /// Copy `src` into `dst` using fixed-size double-copy tricks for small sizes.
 ///
-/// Generic so the decoder can copy into `MaybeUninit<u8>` output.
-/// Thresholds assume one-byte elements.
+/// Generic over `T: Copy`. Thresholds assume one-byte elements.
 #[inline]
 pub fn slice_copy<T: Copy>(src: &[T], dst: &mut [T]) {
     #[inline(never)]

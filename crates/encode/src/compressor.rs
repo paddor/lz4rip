@@ -1,5 +1,4 @@
 //! Owning block compressors (alloc).
-#![forbid(unsafe_code)]
 
 use core::fmt;
 

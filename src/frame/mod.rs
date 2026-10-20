@@ -19,24 +19,8 @@
 
 use std::{fmt, io};
 
-#[cfg(not(any(feature = "paranoid", target_pointer_width = "32")))]
-macro_rules! paranoid_unsafe_call {
-    ($e:expr) => {
-        unsafe { $e }
-    };
-}
-
-#[cfg(any(feature = "paranoid", target_pointer_width = "32"))]
-macro_rules! paranoid_unsafe_call {
-    ($e:expr) => {
-        $e
-    };
-}
-
 pub(crate) mod compress;
-#[forbid(unsafe_code)]
 pub(crate) mod decompress;
-#[forbid(unsafe_code)]
 pub(crate) mod header;
 
 pub use compress::{AutoFinishEncoder, FrameEncoder};

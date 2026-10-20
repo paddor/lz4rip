@@ -226,9 +226,6 @@ fn run() -> Result<(), String> {
     if cfg!(debug_assertions) {
         return Err("run the performance gate with --release".into());
     }
-    if cfg!(feature = "paranoid") {
-        return Err("performance thresholds target the default codec, without paranoid".into());
-    }
     let args: Vec<_> = std::env::args().skip(1).collect();
     let measure_only = match args.as_slice() {
         [] => false,

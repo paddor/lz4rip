@@ -24,11 +24,6 @@ fn block_roundtrip_no_dict() {
     assert_eq!(m, input.len());
     assert_eq!(out, input);
 
-    let mut uninit = Vec::with_capacity(input.len());
-    let out = lz4rip::block::decompress_into_uninit(&compressed[..n], uninit.spare_capacity_mut())
-        .unwrap();
-    assert_eq!(out, input);
-
     let mut out = b"prefix".to_vec();
     let m = lz4rip::block::decompress_append(&compressed[..n], &mut out, input.len()).unwrap();
     assert_eq!(m, input.len());

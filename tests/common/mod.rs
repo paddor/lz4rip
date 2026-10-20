@@ -3,7 +3,7 @@
 #[cfg(feature = "frame")]
 use lz4rip::frame::BlockMode;
 use lz4rip::{
-    block::{decompress, decompress_append, decompress_into_uninit},
+    block::{decompress, decompress_append},
     compress as compress_block,
 };
 
@@ -85,10 +85,6 @@ pub fn test_roundtrip(bytes: impl AsRef<[u8]>) {
     let bytes = bytes.as_ref();
     let compressed = compress_block(bytes);
     let decompressed = decompress(&compressed, bytes.len()).unwrap();
-    assert_eq!(decompressed, bytes);
-
-    let mut uninit = Vec::with_capacity(bytes.len());
-    let decompressed = decompress_into_uninit(&compressed, uninit.spare_capacity_mut()).unwrap();
     assert_eq!(decompressed, bytes);
 
     let mut appended = b"prefix".to_vec();

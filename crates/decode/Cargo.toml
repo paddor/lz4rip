@@ -1,9 +1,9 @@
 [package]
 name = "lz4rip-decode"
 description = "LZ4 block decompression for lz4rip."
-version = "0.10.6"
+version = "0.11.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.89"
 license = "MIT"
 repository = "https://github.com/paddor/lz4rip"
 readme = "README.md"
@@ -13,11 +13,9 @@ default = ["std"]
 alloc = []
 std = ["alloc", "lz4rip-core/std"]
 nightly = ["lz4rip-core/nightly"]
-# Pure safe Rust: forbid all unsafe, swap unchecked ops for safe twins.
+# No effect today: every build is safe Rust. Kept so existing feature lists
+# build, and to keep any future `unsafe` out of builds that enable it.
 paranoid = ["lz4rip-core/paranoid"]
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
-
 [dependencies]
-lz4rip-core = { version = "0.6.0", path = "../core", default-features = false }
+lz4rip-core = { version = "0.6.1", path = "../core", default-features = false }
