@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- npm package `@paddor/lz4rip` with Node-compatible WASM initialization,
+  types, and tests, built from the JSR WASM crate with web bindings.
+- npm release workflow that builds, smoke-tests, and publishes
+  `@paddor/lz4rip` from GitHub Actions with OIDC provenance.
+
 ## [0.12.1] - 2026-10-20
 
 ### Changed

@@ -17,4 +17,7 @@ Session.vim
 /jsr/wasm/Cargo.lock
 /jsr/src/pkg
 /jsr/src/pkg-tmp
+/npm/src/pkg/
+/npm/*.tgz
+/npm/release-tarballs/
 /tmp/

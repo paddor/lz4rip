@@ -14,7 +14,7 @@ Originally derived from [lz4_flex](https://github.com/PSeitz/lz4_flex).
 - **32-bit Linux.** `i686-unknown-linux-gnu` and
   `armv7-unknown-linux-gnueabihf` are tested in CI. Streams and frames are
   bounded by platform address-space limits.
-- **WebAssembly.** Available as [`@paddor/lz4rip`](https://jsr.io/@paddor/lz4rip) on JSR. Block compress and decompress, dictionaries.
+- **WebAssembly.** Available as `@paddor/lz4rip` on [JSR](https://jsr.io/@paddor/lz4rip) and [npm](https://www.npmjs.com/package/@paddor/lz4rip). Block compress and decompress, dictionaries.
 
 See [DESIGN.md](DESIGN.md) for how it all works.
 

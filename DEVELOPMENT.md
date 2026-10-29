@@ -93,11 +93,11 @@ Do not add a crates.io token secret.
    `## [Unreleased]` for each bumped crate and place its release notes there.
    Never rename or modify an existing versioned section.
 
-3. **Bump the WASM package.** Update `jsr/deno.json` and
-   `jsr/wasm/Cargo.toml`.
+3. **Bump the WASM package.** Update `jsr/deno.json`, `npm/package.json`,
+   and `jsr/wasm/Cargo.toml`.
 
-4. **Build and verify.** Run the JSR commands below and any additional release
-   audit warranted by the changes.
+4. **Build and verify.** Run the JSR and npm commands below and any additional
+   release audit warranted by the changes.
 
 5. **Merge the release PR after CI passes.** Monitor `release-plz` for crate
    publication and `.github/workflows/jsr.yml` for JSR publication.
@@ -116,6 +116,42 @@ deno task test
 Use Deno 2.8.3 or newer for the bundled tests. They cover standalone bundles,
 synchronous bytes, and initialization races. Bundled default initialization
 runs without file or network permissions.
+
+### npm
+
+`@paddor/lz4rip` publishes to npm from `.github/workflows/release-npm.yml`.
+The workflow version comes from an `lz4rip-npm-v*` tag or the manual
+`workflow_dispatch` input. It builds the WASM package with web bindings, runs
+Node tests, packs the tarball, smoke-tests an installed tarball, then publishes
+from the `npm` environment.
+
+```bash
+cd npm
+npm test
+npm run pack:dry
+```
+
+Publishing uses npm trusted publishing with GitHub Actions OIDC. In npm,
+configure a trusted publisher for `@paddor/lz4rip` before tagging:
+
+```text
+GitHub owner: paddor
+GitHub repository: lz4rip
+Workflow filename: release-npm.yml
+Environment name: npm
+Allowed action: npm publish
+```
+
+A trusted publisher needs an existing package. For the first release, add a
+publish-capable GitHub Actions secret named `NPM_TOKEN`, run
+`.github/workflows/release-npm.yml`, then remove or rotate that token and
+configure the trusted publisher before the next CI release.
+
+```bash
+git tag -a lz4rip-npm-v0.2.20 -m "lz4rip npm 0.2.20"
+git push origin lz4rip-npm-v0.2.20
+gh run watch --repo paddor/lz4rip --exit-status
+```
 
 ## Fuzzing
 
