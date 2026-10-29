@@ -2,7 +2,9 @@
 set -e
 cd "$(dirname "$0")"
 
-PKG=src/pkg
+# The npm package uses web bindings; JSR uses native WASM imports.
+BINDGEN_TARGET=${1:-bundler}
+PKG=${2:-src/pkg}
 TMP=src/pkg-tmp
 
 rm -rf "$PKG" "$TMP"
@@ -10,7 +12,7 @@ mkdir -p "$PKG"
 
 echo "==> Building WASM..."
 cd wasm
-wasm-pack build --target bundler --release --out-dir "../$TMP"
+wasm-pack build --target "$BINDGEN_TARGET" --release --out-dir "../$TMP"
 cd ..
 
 cp "$TMP/"*.js "$PKG/"

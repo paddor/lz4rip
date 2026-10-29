@@ -1,0 +1,46 @@
+{
+  "name": "@paddor/lz4rip",
+  "version": "0.2.20",
+  "description": "Pure Rust LZ4 block and frame codec compiled to WebAssembly. Compress and decompress with optional dictionary support.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paddor/lz4rip.git",
+    "directory": "npm"
+  },
+  "homepage": "https://github.com/paddor/lz4rip#readme",
+  "bugs": {
+    "url": "https://github.com/paddor/lz4rip/issues"
+  },
+  "keywords": [
+    "lz4",
+    "compression",
+    "decompression",
+    "dictionary",
+    "wasm",
+    "webassembly"
+  ],
+  "exports": {
+    ".": {
+      "types": "./src/mod.d.ts",
+      "import": "./src/mod.js",
+      "default": "./src/mod.js"
+    }
+  },
+  "types": "./src/mod.d.ts",
+  "files": [
+    "src/",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "bash build.sh",
+    "pack:dry": "npm run build && npm pack --dry-run",
+    "test": "npm run build && node --test"
+  }
+}
