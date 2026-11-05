@@ -42,8 +42,9 @@ sets memory and the hash shift. It must be a power of two and at least
   inputs clear it: on a stream of different messages, stale entries cost
   2-8 KB inputs 50-70% (text) and 10-25% (XML, records) more than the clear.
   Incompressible input of that size loses 7-26% to the clear.
-- **Dict, dict + input < 64 KB**: a main table plus a read-only pristine dict
-  table, probed first. Inputs up to 256 B probe only the pristine table.
+- **Dict, dict + input < 64 KB**: a main table for this input, probed first,
+  plus a read-only pristine dict table. Inputs up to 256 B probe only the
+  pristine table.
   Inputs up to 1 KB reuse the main table from a per-compressor base that
   advances each call; it is cleared only when positions would pass
   `u16::MAX`. Reuse made 512 B and 1 KB 15% and 8% faster than clearing,
@@ -181,9 +182,24 @@ nothing is self-referential.
 
 `DictCompressorRef::new` / `DictCompressor::new` hash the dict once into the
 pristine table. `init_dict` hashes every 3rd byte: cheaper setup, reasonable
-coverage. Each call probes the pristine table first, then the main table. The
-dict + input < 64 KB bound makes every dict candidate a valid offset, so the
-dict probe needs only a bounds check.
+coverage. The dict + input < 64 KB bound makes every dict candidate a valid
+offset, so the dict probe needs only a bounds check.
+
+Each call probes the main table (this input) first, then the pristine table,
+as C lz4 does. A match within the input is usually much longer than a dict
+match at the same position. Until 0.12.1 the dict came first and took short
+dict hits over them. On Silesia prefixes with a trained 2 KB dict (x86_64),
+input-first made output 3-12% smaller at 512 B-32 KiB, compression 3-35%
+faster and decompression 6-19% faster, from fewer, longer matches. Inputs
+from 64 KiB take the single-table path and did not change.
+
+Inputs up to 256 B (`DICT_READONLY_LIMIT`) still probe only the pristine
+table, so they find no matches within themselves. Writing them to the main
+table made their output 11-14% smaller, but compression 4-14% slower and
+decompression 12-24% slower, since matches within the input have short
+offsets. Against C lz4 with the same dict, lz4rip's output is 5-7% larger at
+512 B-8 KiB, about the no-dict gap from skip acceleration, and 15-20% larger
+up to 256 B.
 
 Dict and no-dict are separate types (`DictCompressorRef` vs `CompressorRef`,
 `DictCompressor` vs `Compressor`), not one enum, so a no-dict compressor

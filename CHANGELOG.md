@@ -11,6 +11,11 @@
 
 ### Changed
 
+- Dictionary compression looks for matches within the input before matches
+  in the dict, as C lz4 does. On 512 B-32 KiB inputs output is 3-12%
+  smaller, compression 3-35% faster and decompression 6-19% faster (Silesia
+  prefixes, trained 2 KB dict, x86_64). Inputs up to 256 B and from 64 KiB
+  are unchanged. Output differs from 0.12.1.
 - `lz4rip_bench` gives C lz4 its dictionary the way `lz4frame` does: indexed
   once (`LZ4_loadDictSlow`) and attached per call (`LZ4_attach_dictionary`),
   instead of `LZ4_loadDict` on every call. C dict compression measures up to
