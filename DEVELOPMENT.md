@@ -15,6 +15,13 @@ echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governo
 
 Pin to a single core with `taskset -c 0` to avoid cross-core migration noise.
 
+On x86_64 Linux, `.cargo/config.toml` builds lz4rip and C lz4 with the JCC
+erratum mitigation (branches kept within 32-byte boundaries). On the
+Skylake-family dev machine it moves results by 5-35%, often more than code
+changes do. Leave it on, so both codecs are compared with the same build
+setting. A `RUSTFLAGS` environment variable replaces the Rust half, so do not
+set one while benchmarking.
+
 The bench builds lz4rip the way applications do. The release profile keeps
 Cargo's default codegen units, and the bench calls the generic compressors
 through `crates/bench-app`, a library crate. Compiled in the bench binary,
@@ -26,7 +33,7 @@ on systems where sysfs is unavailable (or when the governor was not changed befo
 running). Always set it:
 
 ```sh
-export LZ4RIP_HW_EXTRAS="performance governor,turbo off"
+export LZ4RIP_HW_EXTRAS="performance governor,turbo off,JCC erratum mitigation"
 ```
 
 The bench downloads the 12-file Silesia corpus into ignored `corpus/silesia/`
@@ -45,12 +52,17 @@ taskset -c 0 cargo run --release --example lz4rip_bench -- --small
 cargo run --manifest-path bench/Cargo.toml --bin lz4rip_charts -- all doc/charts/x86_64
 ```
 
-`--small` benchmarks slices (512 B to 1 MiB) of four Silesia files with
-reused compressor state and writes `small_encode.svg` and `small_decode.svg`.
-Each timed pass walks up to 64 distinct slices of one size, so no codec sees
-the same input twice in a row. Repeating one input lets the branch predictor
-learn it and distorts results. Every implementation decodes C lz4's blocks
-(thick lines) and its own output (thin lines).
+`--small`, `--structured`, `--structured-dict` and `--sweep` compress with
+reused compressor state, as a hot loop over messages would, both for lz4rip
+and C lz4. Each timed pass walks up to 64 distinct consecutive slices of one
+size, so no codec sees the same input twice in a row. Repeating one input lets
+the branch predictor learn it and distorts results. `--structured`,
+`--structured-dict` and `--sweep` rows hold per-message means, and each codec
+decodes its own output. `--small` rows hold pass totals.
+
+`--small` benchmarks slices (512 B to 1 MiB) of four Silesia files and writes
+`small_encode.svg` and `small_decode.svg`. Every implementation decodes C
+lz4's blocks (thick lines) and its own output (thin lines).
 
 Rerun only lz4rip (other impls served from cache), then regenerate charts:
 ```sh

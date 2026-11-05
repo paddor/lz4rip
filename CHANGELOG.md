@@ -9,6 +9,23 @@
 - npm release workflow that builds, smoke-tests, and publishes
   `@paddor/lz4rip` from GitHub Actions with OIDC provenance.
 
+### Changed
+
+- `lz4rip_bench` gives C lz4 its dictionary the way `lz4frame` does: indexed
+  once (`LZ4_loadDictSlow`) and attached per call (`LZ4_attach_dictionary`),
+  instead of `LZ4_loadDict` on every call. C dict compression measures up to
+  6.5x faster on small inputs, and the dict charts change with it.
+- `lz4rip_bench --structured`, `--structured-dict` and `--sweep` walk up to
+  64 distinct slices per file and size, as `--small` does, instead of
+  repeating one prefix, which let the branch predictor learn it. All codecs
+  reuse their state, as in a hot loop. `--sweep` without a dict used the
+  one-shot `compress_into` before, which set up a fresh table per call and
+  made lz4rip look 2.5x slower than C at 64 B.
+- Builds inside this repository use the JCC erratum mitigation on x86_64
+  Linux, for lz4rip and C lz4 alike (`.cargo/config.toml`). The x86_64
+  charts are measured with it. The README shows how applications can enable
+  it on Intel Skylake-family CPUs.
+
 ## [0.12.1] - 2026-10-20
 
 ### Changed

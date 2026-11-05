@@ -25,12 +25,25 @@ non-matching data more aggressively than C lz4 and lz4_flex, which costs about
 9% ratio on compressible data (2.18x vs 2.39x) but makes compression faster,
 especially on incompressible input where the skip acceleration dominates.
 
-Charts use the full 12-file Silesia corpus.
+On Intel Skylake-family CPUs (Skylake through Comet Lake), build with the JCC
+erratum mitigation:
+
+```sh
+RUSTFLAGS="-C llvm-args=-x86-branches-within-32B-boundaries" cargo build --release
+```
+
+On an i7-8700B this makes compression 16-26% faster on 2-64 KB inputs and
+with a dictionary, and decompression up to 14% faster. Output does not change.
+Other CPUs do not need it. C lz4 1.11 enables the same mitigation in its own
+build.
+
+Charts use the full 12-file Silesia corpus. The x86_64 charts build both
+lz4rip and C lz4 with the JCC erratum mitigation (see `.cargo/config.toml`).
 
 ![LZ4 Pipeline Summary](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/summary.svg)
 
 <details>
-<summary>x86_64 Silesia details (per-file, prefix sweep, dictionary)</summary>
+<summary>x86_64 Silesia details (per-file, slice sweep, dictionary)</summary>
 
 ![LZ4 Pipeline Detail](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/pipeline.svg)
 ![LZ4 Size Sweep](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/sweep.svg)
@@ -38,7 +51,7 @@ Charts use the full 12-file Silesia corpus.
 </details>
 
 <details>
-<summary>x86_64 Silesia prefixes (with and without dictionary)</summary>
+<summary>x86_64 Silesia slices, 256 B to 8 KiB (with and without dictionary)</summary>
 
 ![LZ4 Structured Dict 2K](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/structured/dict2k.svg)
 ![LZ4 Structured No Dict](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/structured/no_dict.svg)
