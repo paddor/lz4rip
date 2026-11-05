@@ -1,0 +1,14 @@
+# Intel Skylake-family CPUs (Skylake through Comet Lake) slow down loops whose
+# jumps cross or end on a 32-byte boundary, since the microcode fix for the
+# "JCC erratum". Keeping branches within 32-byte boundaries makes lz4rip and
+# C lz4 faster there and does not change output. C lz4 1.11's own build turns
+# this on by default. These settings only apply to builds inside this
+# repository, so the bench measures both codecs with it. Crates that depend on
+# lz4rip are not affected. A `RUSTFLAGS` environment variable (as set in CI)
+# replaces the rustflags below.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "llvm-args=-x86-branches-within-32B-boundaries"]
+
+[env]
+# Read by the `cc` crate when `lzzzz` builds C lz4. gcc syntax (binutils 2.34+).
+CFLAGS_x86_64_unknown_linux_gnu = "-Wa,-mbranches-within-32B-boundaries"

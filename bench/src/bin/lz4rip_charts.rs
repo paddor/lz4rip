@@ -819,7 +819,7 @@ fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
     chart_header(
         &area,
         width,
-        "12-file Silesia Prefix Sweep: LZ4 throughput (log-log)",
+        "12-file Silesia Slice Sweep: LZ4 throughput (log-log)",
         cfg.hw_label.as_deref(),
         22,
     )?;
@@ -856,7 +856,7 @@ fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
 
     text(
         &area,
-        "input prefix size",
+        "input slice size",
         px(width as f64 / 2.0),
         px(panel2_top + panel_h + 32.0),
         11,
@@ -911,7 +911,7 @@ fn draw_structured(cfg: &Config, out_dir: &Path, dict: bool) -> Result<(), Box<d
         })
         .collect::<Vec<_>>();
     if sizes.is_empty() {
-        return Err("structured: no Silesia prefix rows in cache".into());
+        return Err("structured: no Silesia slice rows in cache".into());
     }
 
     let mut stacks = BTreeMap::new();
@@ -939,9 +939,9 @@ fn draw_structured(cfg: &Config, out_dir: &Path, dict: bool) -> Result<(), Box<d
     let path = output_path(out_dir, file_name);
     let area = root(&path, width, height)?;
     let title = if dict {
-        "12-file Silesia Prefixes + Dict 2K"
+        "12-file Silesia Slices + Dict 2K"
     } else {
-        "12-file Silesia Prefixes: Compressor Reuse"
+        "12-file Silesia Slices: Compressor Reuse"
     };
     chart_header(
         &area,

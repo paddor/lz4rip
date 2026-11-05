@@ -38,9 +38,10 @@ const EPOCH_THRESHOLD: usize = 1024;
 /// more CPU on rotating messages, especially at 1-2 KiB.
 const INCREASE_STEPSIZE_BITSHIFT: usize = 3;
 
-/// Inputs up to this size use the dict table read-only (no per-call clearing or
-/// table writes). Self-references within small inputs are rare; the dict provides
-/// virtually all matches. Skips the 8 KB table.clear() and all put_at writes.
+/// Inputs up to this size use the dict table read-only: no main table, no
+/// writes. They find no matches within themselves, which costs 11-14% output
+/// size, but writing the table and decoding the short-offset matches it finds
+/// made them 4-14% slower to compress and 12-24% slower to decode (DESIGN.md).
 const DICT_READONLY_LIMIT: usize = 256;
 
 /// Dict inputs up to this size reuse the main table across calls (epoch
@@ -542,26 +543,11 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
             let main_candidate = table.get_at(hash);
             table.put_at(hash, cur + main_base);
 
-            // Probe dict table first: for small inputs most matches come from
-            // the dict, and even for large inputs the dict covers the first
-            // window of repeated structure.
-            let dict_candidate = dict_table.get_at(hash);
-            // Pristine entries are dict positions, and dict + input fit in
-            // `u16`, so a dict candidate is always within `MAX_DISTANCE`.
-            // `init_dict` stores only positions with 8 readable bytes, so
-            // requiring 4 loses nothing and lets the compiler drop the read's
-            // bounds check (`dict_candidate` is a `u16`, so the add can't
-            // wrap).
-            if dict_candidate + 4 <= ext_dict.len() {
-                debug_assert!(input_stream_offset + cur - dict_candidate <= MAX_DISTANCE);
-                if rd32(ext_dict, dict_candidate) == curr_bytes() {
-                    offset = (input_stream_offset + cur - dict_candidate) as u16;
-                    candidate = dict_candidate;
-                    candidate_source = ext_dict;
-                    break;
-                }
-            }
-
+            // Probe this input first, then the dict, as C lz4 does. An input
+            // match is usually much longer than a dict match at the same spot.
+            // Dict-first took short dict hits over them: output was 4-13%
+            // larger at 512 B-8 KiB, and slower to write and decode.
+            //
             // Main-table entries from earlier calls sit below `main_base`,
             // entries from this call below `main_base + cur`. Dict + input
             // fit in `u16`, so every candidate is within `MAX_DISTANCE`.
@@ -576,6 +562,23 @@ fn compress_with_dict_table<T: HashTable, S: Sink>(
                     offset = (cur - main_pos) as u16;
                     candidate = main_pos;
                     candidate_source = input;
+                    break;
+                }
+            }
+
+            let dict_candidate = dict_table.get_at(hash);
+            // Pristine entries are dict positions, and dict + input fit in
+            // `u16`, so a dict candidate is always within `MAX_DISTANCE`.
+            // `init_dict` stores only positions with 8 readable bytes, so
+            // requiring 4 loses nothing and lets the compiler drop the read's
+            // bounds check (`dict_candidate` is a `u16`, so the add can't
+            // wrap).
+            if dict_candidate + 4 <= ext_dict.len() {
+                debug_assert!(input_stream_offset + cur - dict_candidate <= MAX_DISTANCE);
+                if rd32(ext_dict, dict_candidate) == curr_bytes() {
+                    offset = (input_stream_offset + cur - dict_candidate) as u16;
+                    candidate = dict_candidate;
+                    candidate_source = ext_dict;
                     break;
                 }
             }
