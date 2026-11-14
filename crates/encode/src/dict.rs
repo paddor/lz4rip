@@ -27,6 +27,16 @@ pub struct DictTrainer {
     total_bytes: usize,
 }
 
+impl core::fmt::Debug for DictTrainer {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DictTrainer")
+            .field("max_dict_size", &self.max_dict_size)
+            .field("samples", &self.samples.len())
+            .field("total_bytes", &self.total_bytes)
+            .finish()
+    }
+}
+
 impl DictTrainer {
     /// Create a trainer targeting `max_dict_size` bytes of output.
     ///

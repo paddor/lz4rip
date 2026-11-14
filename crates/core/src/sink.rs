@@ -57,6 +57,15 @@ impl<'a> SliceSink<'a> {
     }
 }
 
+impl core::fmt::Debug for SliceSink<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SliceSink")
+            .field("capacity", &self.output.len())
+            .field("pos", &self.pos)
+            .finish()
+    }
+}
+
 impl Sink for SliceSink<'_> {
     #[inline]
     fn push(&mut self, byte: u8) {
