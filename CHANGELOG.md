@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-11-14
+
 ### Added
 
 - npm package `@paddor/lz4rip` with Node-compatible WASM initialization,
