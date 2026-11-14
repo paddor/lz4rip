@@ -2,9 +2,19 @@
 
 ## [Unreleased]
 
+## [0.10.13] - 2026-11-14
+
 ### Added
 
 - `Debug` for `DictTrainer`. It prints sizes, not sample contents.
+
+### Changed
+
+- Dictionary compression looks for matches within the input before matches
+  in the dict, as C lz4 does. On 512 B-32 KiB inputs output is 3-12%
+  smaller, compression 3-35% faster and decompression 6-19% faster (Silesia
+  prefixes, trained 2 KB dict, x86_64). Inputs up to 256 B and from 64 KiB
+  are unchanged. Output differs from 0.10.12.
 
 ## [0.10.12] - 2026-10-20
 
