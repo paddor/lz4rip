@@ -431,6 +431,7 @@ impl<W: io::Write> io::Write for FrameEncoder<W> {
 }
 
 /// A wrapper around an [`FrameEncoder<W>`] that finishes the stream on drop.
+#[derive(Debug)]
 pub struct AutoFinishEncoder<W: Write> {
     encoder: Option<FrameEncoder<W>>,
 }
@@ -460,7 +461,7 @@ impl<W: Write> Write for AutoFinishEncoder<W> {
 }
 
 impl<W: fmt::Debug + io::Write> fmt::Debug for FrameEncoder<W> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FrameEncoder")
             .field("w", &self.w)
             .field("frame_info", &self.frame_info)

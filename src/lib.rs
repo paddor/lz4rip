@@ -61,6 +61,10 @@
 //!
 #![deny(warnings)]
 #![deny(missing_docs)]
+#![deny(missing_debug_implementations)]
+#![deny(unreachable_pub)]
+#![deny(rust_2018_idioms)]
+#![deny(future_incompatible)]
 #![forbid(unsafe_code)]
 #![cfg_attr(not(feature = "std"), no_std)]
 #![cfg_attr(docsrs, feature(doc_cfg))]

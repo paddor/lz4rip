@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `Debug` for `DictTrainer`. It prints sizes, not sample contents.
+
 ## [0.10.12] - 2026-10-20
 
 ### Changed

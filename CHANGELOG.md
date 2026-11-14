@@ -8,6 +8,10 @@
   types, and tests, built from the JSR WASM crate with web bindings.
 - npm release workflow that builds, smoke-tests, and publishes
   `@paddor/lz4rip` from GitHub Actions with OIDC provenance.
+- `Debug` for `DictTrainer`, `AutoFinishEncoder` and `SliceSink`. It prints
+  sizes, not buffer contents. All library crates now deny
+  `missing_debug_implementations`, `unreachable_pub`, `rust_2018_idioms`
+  and `future_incompatible`.
 
 ### Changed
 
@@ -30,6 +34,12 @@
   Linux, for lz4rip and C lz4 alike (`.cargo/config.toml`). The x86_64
   charts are measured with it. The README shows how applications can enable
   it on Intel Skylake-family CPUs.
+
+### Fixed
+
+- Require `twox-hash` 2.1.3. Older `XxHash32` adds the input length with a
+  checked add, so debug builds could panic on frame checksums for some
+  inputs (twox-hash#120).
 
 ## [0.12.1] - 2026-10-20
 
