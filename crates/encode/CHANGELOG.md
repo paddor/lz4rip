@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.14] - 2026-11-18
+
 ### Changed
 
 - Compressed output is the same on every target. 32-bit targets (including
