@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Compressed output is the same on every target. 32-bit targets (including
+  wasm32) and big-endian targets now hash like 64-bit little-endian ones, so
+  their output differs from earlier versions. wasm32 compresses 32% faster
+  (geomean, Silesia), i686 8% faster. x86_64 is unchanged.
+  Big-endian targets hashed the wrong bytes before and found fewer matches:
+  on s390x, a 4 KiB text sample compressed 36% larger.
+
 ## [0.12.2] - 2026-11-14
 
 ### Added
