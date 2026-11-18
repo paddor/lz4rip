@@ -12,10 +12,11 @@ lz4rip = { path = "../..", default-features = false, features = ["std"] }
 
 [dependencies.lz4_flex_upstream]
 git = "https://github.com/PSeitz/lz4_flex"
+tag = "0.14.2"
 package = "lz4_flex"
 
 [dependencies.lz4_flex_unsafe]
-version = "0.11.5"
+version = "0.14.2"
 package = "lz4_flex"
 default-features = false
 features = ["std"]
