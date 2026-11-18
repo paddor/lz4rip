@@ -22,15 +22,15 @@ seconds / GB
 3
 </text>
 <polyline fill="none" opacity="1" stroke="#30363D" stroke-width="2" points="70,318 830,318 "/>
-<rect x="108" y="180" width="50" height="138" opacity="1" fill="#60A5FA" stroke="none"/>
-<rect x="108" y="150" width="50" height="30" opacity="1" fill="#4680C4" stroke="none"/>
-<rect x="108" y="128" width="50" height="22" opacity="1" fill="#60A5FA" stroke="none"/>
-<rect x="160" y="189" width="50" height="129" opacity="1" fill="#F87171" stroke="none"/>
-<rect x="160" y="156" width="50" height="33" opacity="1" fill="#C45050" stroke="none"/>
-<rect x="160" y="131" width="50" height="25" opacity="1" fill="#F87171" stroke="none"/>
-<rect x="212" y="176" width="50" height="142" opacity="1" fill="#F59E0B" stroke="none"/>
-<rect x="212" y="146" width="50" height="30" opacity="1" fill="#C47D08" stroke="none"/>
-<rect x="212" y="118" width="50" height="28" opacity="1" fill="#F59E0B" stroke="none"/>
+<rect x="108" y="179" width="50" height="139" opacity="1" fill="#60A5FA" stroke="none"/>
+<rect x="108" y="150" width="50" height="29" opacity="1" fill="#4680C4" stroke="none"/>
+<rect x="108" y="127" width="50" height="23" opacity="1" fill="#60A5FA" stroke="none"/>
+<rect x="160" y="190" width="50" height="128" opacity="1" fill="#F87171" stroke="none"/>
+<rect x="160" y="158" width="50" height="32" opacity="1" fill="#C45050" stroke="none"/>
+<rect x="160" y="133" width="50" height="25" opacity="1" fill="#F87171" stroke="none"/>
+<rect x="212" y="177" width="50" height="141" opacity="1" fill="#F59E0B" stroke="none"/>
+<rect x="212" y="148" width="50" height="29" opacity="1" fill="#C47D08" stroke="none"/>
+<rect x="212" y="120" width="50" height="28" opacity="1" fill="#F59E0B" stroke="none"/>
 <rect x="264" y="156" width="50" height="162" opacity="1" fill="#4ADE80" stroke="none"/>
 <rect x="264" y="126" width="50" height="30" opacity="1" fill="#3AAF60" stroke="none"/>
 <rect x="264" y="95" width="50" height="31" opacity="1" fill="#4ADE80" stroke="none"/>
@@ -38,8 +38,8 @@ seconds / GB
 Compressible
 </text>
 <rect x="488" y="207" width="50" height="111" opacity="1" fill="#60A5FA" stroke="none"/>
-<rect x="488" y="153" width="50" height="54" opacity="1" fill="#4680C4" stroke="none"/>
-<rect x="488" y="136" width="50" height="17" opacity="1" fill="#60A5FA" stroke="none"/>
+<rect x="488" y="152" width="50" height="55" opacity="1" fill="#4680C4" stroke="none"/>
+<rect x="488" y="136" width="50" height="16" opacity="1" fill="#60A5FA" stroke="none"/>
 <rect x="540" y="267" width="50" height="51" opacity="1" fill="#F87171" stroke="none"/>
 <rect x="540" y="210" width="50" height="57" opacity="1" fill="#C45050" stroke="none"/>
 <rect x="540" y="197" width="50" height="13" opacity="1" fill="#F87171" stroke="none"/>
@@ -48,13 +48,13 @@ Compressible
 <rect x="592" y="147" width="50" height="19" opacity="1" fill="#F59E0B" stroke="none"/>
 <rect x="644" y="199" width="50" height="119" opacity="1" fill="#4ADE80" stroke="none"/>
 <rect x="644" y="144" width="50" height="55" opacity="1" fill="#3AAF60" stroke="none"/>
-<rect x="644" y="122" width="50" height="22" opacity="1" fill="#4ADE80" stroke="none"/>
+<rect x="644" y="123" width="50" height="21" opacity="1" fill="#4ADE80" stroke="none"/>
 <text x="588" y="338" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="9.67741935483871" opacity="1" fill="#E6EDF3" font-weight="bold">
 Incompressible
 </text>
 <rect x="225" y="364" width="12" height="12" opacity="1" fill="#60A5FA" stroke="none"/>
 <text x="243" y="370" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#E6EDF3">
-lz4 (C)
+lz4 v1.10.0 (C)
 </text>
 <rect x="225" y="384" width="12" height="12" opacity="1" fill="#F87171" stroke="none"/>
 <text x="243" y="390" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#E6EDF3">
@@ -62,11 +62,11 @@ lz4rip (safe)
 </text>
 <rect x="455" y="364" width="12" height="12" opacity="1" fill="#F59E0B" stroke="none"/>
 <text x="473" y="370" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#E6EDF3">
-lz4_flex (unsafe)
+lz4_flex v0.14.2 (unsafe)
 </text>
 <rect x="455" y="384" width="12" height="12" opacity="1" fill="#4ADE80" stroke="none"/>
 <text x="473" y="390" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#E6EDF3">
-lz4_flex (safe)
+lz4_flex v0.14.2 (safe)
 </text>
 <text x="215" y="428" dy="0.5ex" text-anchor="start" font-family="sans-serif" font-size="8.064516129032258" opacity="1" fill="#E6EDF3">
 bright = compress + decompress

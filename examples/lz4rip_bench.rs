@@ -135,12 +135,19 @@ struct BenchResult {
     compressed_size: usize,
     compress_ns: f64,
     decompress_ns: f64,
+    /// Version of the codec measured (`X.Y.Z`), none for lz4rip.
+    version: Option<String>,
 }
 
 impl BenchResult {
     fn to_json(&self) -> String {
+        let version = self
+            .version
+            .as_ref()
+            .map(|v| format!(r#", "version": "{v}""#))
+            .unwrap_or_default();
         format!(
-            r#"{{"codec": "{}", "input": "{}", "input_size": {}, "compressed_size": {}, "compress_ns": {:.1}, "decompress_ns": {:.1}}}"#,
+            r#"{{"codec": "{}", "input": "{}", "input_size": {}, "compressed_size": {}, "compress_ns": {:.1}, "decompress_ns": {:.1}{version}}}"#,
             self.codec,
             self.input_name,
             self.input_size,
@@ -174,8 +181,41 @@ impl BenchResult {
             compressed_size: get("compressed_size")?.parse().ok()?,
             compress_ns: get("compress_ns")?.parse().ok()?,
             decompress_ns: get("decompress_ns")?.parse().ok()?,
+            version: get("version"),
         })
     }
+}
+
+/// Version of the codec behind a result name. lz4rip has none: its results
+/// always measure the working tree.
+fn codec_version(codec: &str) -> Option<String> {
+    if codec.starts_with("C lz4") {
+        Some(lzzzz::version_string().to_string())
+    } else if codec.starts_with("lz4_flex unsafe") {
+        locked_version("lz4_flex", "registry+")
+    } else if codec.starts_with("lz4_flex") {
+        locked_version("lz4_flex", "git+")
+    } else {
+        None
+    }
+}
+
+/// Version of package `name` from a `source` starting with `source_prefix`
+/// in the workspace lockfile. The two lz4_flex variants differ by source.
+fn locked_version(name: &str, source_prefix: &str) -> Option<String> {
+    const LOCK: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock"));
+    LOCK.split("[[package]]").find_map(|pkg| {
+        let field = |key: &str| {
+            pkg.lines().find_map(|l| {
+                l.strip_prefix(key)?
+                    .strip_prefix(" = \"")?
+                    .strip_suffix('"')
+            })
+        };
+        (field("name")? == name && field("source")?.starts_with(source_prefix))
+            .then(|| field("version").map(str::to_string))
+            .flatten()
+    })
 }
 
 /// Minimum CPU time per timed batch. `CLOCK_PROCESS_CPUTIME_ID` is a real
@@ -244,6 +284,7 @@ fn bench_lz4rip(data: &[u8], name: &str, target_ns: u64) -> BenchResult {
 
     BenchResult {
         codec: LZ4RIP_CODEC.to_string(),
+        version: codec_version(LZ4RIP_CODEC),
         input_name: name.to_string(),
         input_size: data.len(),
         compressed_size: comp_len,
@@ -275,6 +316,7 @@ fn bench_lz4_flex_upstream(data: &[u8], name: &str, target_ns: u64) -> BenchResu
 
     BenchResult {
         codec: "lz4_flex".to_string(),
+        version: codec_version("lz4_flex"),
         input_name: name.to_string(),
         input_size: data.len(),
         compressed_size: comp_len,
@@ -306,6 +348,7 @@ fn bench_lz4_flex_unsafe(data: &[u8], name: &str, target_ns: u64) -> BenchResult
 
     BenchResult {
         codec: "lz4_flex unsafe".to_string(),
+        version: codec_version("lz4_flex unsafe"),
         input_name: name.to_string(),
         input_size: data.len(),
         compressed_size: comp_len,
@@ -339,6 +382,7 @@ fn bench_c_lz4(data: &[u8], name: &str, target_ns: u64) -> BenchResult {
 
     BenchResult {
         codec: "C lz4".to_string(),
+        version: codec_version("C lz4"),
         input_name: name.to_string(),
         input_size: data.len(),
         compressed_size: comp_len,
@@ -378,6 +422,7 @@ fn bench_lz4rip_dict(data: &[u8], dict: &[u8], name: &str, target_ns: u64) -> Be
 
     BenchResult {
         codec: LZ4RIP_DICT_CODEC.to_string(),
+        version: codec_version(LZ4RIP_DICT_CODEC),
         input_name: name.to_string(),
         input_size: data.len(),
         compressed_size: comp_len,
@@ -411,6 +456,7 @@ fn bench_c_lz4_dict(data: &[u8], dict: &[u8], name: &str, target_ns: u64) -> Ben
 
     BenchResult {
         codec: "C lz4 (dict 2K)".to_string(),
+        version: codec_version("C lz4 (dict 2K)"),
         input_name: name.to_string(),
         input_size: data.len(),
         compressed_size: comp_len,
@@ -694,6 +740,7 @@ fn per_message(
     let total: usize = blocks.iter().map(Vec::len).sum();
     BenchResult {
         codec: codec.to_string(),
+        version: codec_version(codec),
         input_name: name.to_string(),
         input_size: slices[0].len(),
         compressed_size: (total + n / 2) / n,
@@ -880,6 +927,7 @@ fn run_small(only: &[String], inputs: &[(String, Vec<u8>)]) {
                 let (compress_ns, own) = small_encode(codec, &slices, target_ns);
                 let compressed_size = own.iter().map(Vec::len).sum();
                 let row = |codec: String, decompress_ns: f64| BenchResult {
+                    version: codec_version(&codec),
                     codec,
                     input_name: name.clone(),
                     input_size: total_in,

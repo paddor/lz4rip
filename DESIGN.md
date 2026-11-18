@@ -68,10 +68,11 @@ messages and often slightly faster (less L1d pressure). Presets: with a dict
 ## 5-byte hash
 
 On 64-bit targets C lz4 hashes 4 bytes with a 32-bit KNUTH constant. lz4rip
-hashes 5 bytes of an 8-byte native-endian load with a 64-bit PRIME5 constant
-(one per endianness): fewer collisions in 2K-4K entry tables. The shift
-`>> (64 - N.ilog2())` folds to an immediate per `N`. 32-bit targets use C
-lz4's 4-byte KNUTH hash.
+hashes the first 5 bytes in memory of an 8-byte load with a 64-bit PRIME5
+constant: fewer collisions in 2K-4K entry tables. The shift
+`>> (64 - N.ilog2())` folds to an immediate per `N`. The hash is `u64` math
+on a little-endian view on every target, so compressed output does not
+depend on pointer width or endianness.
 
 ## Compile-time specialization
 

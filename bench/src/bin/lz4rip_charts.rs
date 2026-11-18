@@ -79,6 +79,9 @@ struct BenchRow {
     compressed_size: usize,
     compress_ns: f64,
     decompress_ns: f64,
+    /// Version of the codec measured (`X.Y.Z`), if the bench recorded one.
+    #[serde(default)]
+    version: Option<String>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -411,6 +414,20 @@ fn select_codecs(rows: &[BenchRow], order: &[&'static str]) -> Vec<&'static str>
         .collect()
 }
 
+/// `label` with `v<version>` after the codec name (its first word), when the
+/// rows of `codec` record a version.
+fn codec_label(label: &str, rows: &[BenchRow], codec: &str) -> String {
+    let version = rows
+        .iter()
+        .find(|r| r.codec == codec)
+        .and_then(|r| r.version.as_deref());
+    match (version, label.split_once(' ')) {
+        (Some(v), Some((name, rest))) => format!("{name} v{v} {rest}"),
+        (Some(v), None) => format!("{label} v{v}"),
+        (None, _) => label.to_string(),
+    }
+}
+
 fn require_silesia_rows(
     rows: &[BenchRow],
     codecs: &[&str],
@@ -541,7 +558,15 @@ fn draw_summary(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
     }
 
     let leg_y = p_bot + 52.0;
-    draw_legend(&area, cfg, &codecs, width as f64 / 2.0 - 200.0, leg_y, 2)?;
+    draw_legend(
+        &area,
+        cfg,
+        &rows,
+        &codecs,
+        width as f64 / 2.0 - 200.0,
+        leg_y,
+        2,
+    )?;
     let rows = codecs.len().div_ceil(2);
     draw_segment_legend(
         &area,
@@ -667,7 +692,15 @@ fn draw_pipeline(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
     }
 
     let leg_y = panel_tops[1] + panel_h + 50.0;
-    draw_legend(&area, cfg, &codecs, width as f64 / 2.0 - 200.0, leg_y, 2)?;
+    draw_legend(
+        &area,
+        cfg,
+        &rows,
+        &codecs,
+        width as f64 / 2.0 - 200.0,
+        leg_y,
+        2,
+    )?;
     let rows = codecs.len().div_ceil(2);
     draw_segment_legend(
         &area,
@@ -744,7 +777,7 @@ fn draw_dict2k(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
         draw_stack(&area, x, bar_w, p_top, p_bot, y_max, *parts, style)?;
         text(
             &area,
-            style.label,
+            codec_label(style.label, &rows, codec),
             px(x + bar_w / 2.0),
             px(p_bot + 18.0),
             10,
@@ -780,12 +813,12 @@ fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
     }
 
     let mut grouped: BTreeMap<(String, usize), Vec<BenchRow>> = BTreeMap::new();
-    for row in rows {
+    for row in &rows {
         if codecs.iter().any(|c| row.codec == *c) {
             grouped
                 .entry((row.codec.clone(), row.input_size))
                 .or_default()
-                .push(row);
+                .push(row.clone());
         }
     }
     let sizes = SWEEP_SIZES
@@ -864,7 +897,14 @@ fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
         HPos::Center,
         true,
     )?;
-    draw_sweep_legend(&area, cfg, &codecs, margin_l, panel2_top + panel_h + 56.0)?;
+    draw_sweep_legend(
+        &area,
+        cfg,
+        &rows,
+        &codecs,
+        margin_l,
+        panel2_top + panel_h + 56.0,
+    )?;
     area.present()?;
     drop(area);
     finish_svg(&path, width, height)?;
@@ -893,12 +933,12 @@ fn draw_structured(cfg: &Config, out_dir: &Path, dict: bool) -> Result<(), Box<d
     }
 
     let mut grouped: BTreeMap<(usize, String), Vec<BenchRow>> = BTreeMap::new();
-    for row in rows {
+    for row in &rows {
         if codecs.iter().any(|c| row.codec == *c) && STRUCTURED_SIZES.contains(&row.input_size) {
             grouped
                 .entry((row.input_size, row.codec.clone()))
                 .or_default()
-                .push(row);
+                .push(row.clone());
         }
     }
     let sizes = STRUCTURED_SIZES
@@ -998,7 +1038,15 @@ fn draw_structured(cfg: &Config, out_dir: &Path, dict: bool) -> Result<(), Box<d
     }
 
     let leg_y = p_bot + 42.0;
-    draw_legend(&area, cfg, &codecs, width as f64 / 2.0 - 200.0, leg_y, 2)?;
+    draw_legend(
+        &area,
+        cfg,
+        &rows,
+        &codecs,
+        width as f64 / 2.0 - 200.0,
+        leg_y,
+        2,
+    )?;
     let rows = codecs.len().div_ceil(2);
     draw_segment_legend(
         &area,
@@ -1164,7 +1212,15 @@ fn draw_small(cfg: &Config, out_dir: &Path, decode: bool) -> Result<(), Box<dyn 
         11,
         TEXT,
     )?;
-    draw_legend(&area, cfg, &codecs, left + 40.0, top + total_h + 50.0, 2)?;
+    draw_legend(
+        &area,
+        cfg,
+        &rows,
+        &codecs,
+        left + 40.0,
+        top + total_h + 50.0,
+        2,
+    )?;
     if decode {
         text(
             &area,
@@ -1660,6 +1716,7 @@ fn chart_header(
 fn draw_legend(
     area: &Area<'_>,
     cfg: &Config,
+    data: &[BenchRow],
     items: &[&str],
     x: f64,
     y: f64,
@@ -1677,7 +1734,7 @@ fn draw_legend(
         rect(area, lx, ly - 6.0, lx + 12.0, ly + 6.0, style.color)?;
         text(
             area,
-            style.label,
+            codec_label(style.label, data, key),
             px(lx + 18.0),
             px(ly),
             10,
@@ -1716,6 +1773,7 @@ fn draw_segment_legend(area: &Area<'_>, mid_x: f64, y: f64) -> Result<(), Box<dy
 fn draw_sweep_legend(
     area: &Area<'_>,
     cfg: &Config,
+    data: &[BenchRow],
     codecs: &[&str],
     x: f64,
     y: f64,
@@ -1729,7 +1787,7 @@ fn draw_sweep_legend(
         line(area, lx, y, lx + 20.0, y, style.color, 2)?;
         text(
             area,
-            sweep_label(codec),
+            codec_label(sweep_label(codec), data, codec),
             px(lx + 26.0),
             px(y),
             10,
