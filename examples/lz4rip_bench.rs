@@ -682,7 +682,14 @@ fn run_sweep(dict: &[u8], inputs: &[(String, Vec<u8>)]) {
                 continue;
             }
             let name = prefixed_input_name(source_name, size);
-            for codec in ["lz4rip", "lz4rip (dict)", "C lz4", "C lz4 (dict)"] {
+            for codec in [
+                "lz4rip",
+                "lz4rip (dict)",
+                "C lz4",
+                "C lz4 (dict)",
+                "lz4_flex unsafe",
+                "lz4_flex",
+            ] {
                 let (compress_ns, decompress_ns, blocks) = if codec.contains("dict") {
                     dict_encode_decode(codec, dict, &slices, target_ns)
                 } else {

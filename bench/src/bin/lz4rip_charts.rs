@@ -29,25 +29,23 @@ const COMPRESSIBLE: &[&str] = &[
 ];
 const INCOMPRESSIBLE: &[&str] = &["mr", "sao", "x-ray"];
 
-const MAIN_CODEC_ORDER: &[&str] = &[
+const MAIN_CODEC_ORDER: &[&str] = &["C lz4", "lz4rip", "lz4_flex unsafe", "lz4_flex"];
+const DICT_CODEC_ORDER: &[&str] = &["C lz4 (dict 2K)", "lz4rip (dict 2K)"];
+const SWEEP_CODEC_ORDER: &[&str] = &[
     "C lz4",
+    "C lz4 (dict)",
     "lz4rip",
+    "lz4rip (dict)",
     "lz4_flex unsafe",
     "lz4_flex",
 ];
-const DICT_CODEC_ORDER: &[&str] = &["C lz4 (dict 2K)", "lz4rip (dict 2K)"];
-const SWEEP_CODEC_ORDER: &[&str] = &["C lz4", "C lz4 (dict)", "lz4rip", "lz4rip (dict)"];
+const SWEEP_LEGEND_COLS: usize = 4;
 const STRUCTURED_CODEC_ORDER: &[&str] = &["C lz4", "lz4rip", "lz4_flex unsafe", "lz4_flex"];
 const STRUCTURED_DICT_CODEC_ORDER: &[&str] = &["C lz4 (dict 2K)", "lz4rip (dict 2K)"];
 
 const SMALL_PREFIXES: &[&str] = &["dickens", "nci", "xml", "x-ray"];
 const SMALL_ENCODE_CODEC_ORDER: &[&str] = &["C lz4", "lz4rip", "lz4_flex unsafe", "lz4_flex"];
-const SMALL_DECODE_CODEC_ORDER: &[&str] = &[
-    "C lz4",
-    "lz4rip",
-    "lz4_flex unsafe",
-    "lz4_flex",
-];
+const SMALL_DECODE_CODEC_ORDER: &[&str] = &["C lz4", "lz4rip", "lz4_flex unsafe", "lz4_flex"];
 const SMALL_SIZES: &[usize] = &[
     512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576,
 ];
@@ -226,8 +224,6 @@ impl Config {
                 codec("lz4_flex", "lz4_flex (safe)", 0x4ade80, 0x3aaf60),
                 codec("C lz4 (dict 2K)", "lz4 (C, dict)", 0x60a5fa, 0x4680c4),
                 codec("lz4rip (dict 2K)", "lz4rip (dict)", 0xf87171, 0xc45050),
-                codec("C lz4 (dict)", "lz4 (C) + dict", 0x2dd4bf, 0x1f9b8a),
-                codec("lz4rip (dict)", "lz4rip + dict", 0xfb923c, 0xc46f2d),
             ],
         }
     }
@@ -834,8 +830,15 @@ fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
         return Err("sweep: not enough size points in cache".into());
     }
 
+    let mut seen = BTreeSet::new();
+    let legend_codecs = codecs
+        .iter()
+        .map(|codec| sweep_base_codec(codec))
+        .filter(|codec| seen.insert(*codec))
+        .collect::<Vec<_>>();
     let width = 850;
-    let height = 780;
+    let legend_rows = legend_codecs.len().div_ceil(SWEEP_LEGEND_COLS);
+    let height = 780 + (legend_rows - 1) as u32 * LEGEND_ROW_H as u32;
     let margin_l = 80.0;
     let margin_r = 70.0;
     let margin_top = if cfg.hw_label.is_some() { 62.0 } else { 43.0 };
@@ -901,7 +904,7 @@ fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
         &area,
         cfg,
         &rows,
-        &codecs,
+        &legend_codecs,
         margin_l,
         panel2_top + panel_h + 56.0,
     )?;
@@ -1259,8 +1262,7 @@ where
 {
     let y_bot = panel_top + panel_h;
     let x_right = margin_l + plot_w;
-    let mut metrics: BTreeMap<(String, usize), (f64, f64)> = BTreeMap::new();
-    let mut all_ops = Vec::new();
+    let mut metrics: BTreeMap<(String, usize), f64> = BTreeMap::new();
     let mut all_mbs = Vec::new();
 
     for codec in codecs {
@@ -1268,20 +1270,14 @@ where
             let Some(rows) = grouped.get(&((*codec).to_string(), *size)) else {
                 continue;
             };
-            let ops = geomean(
-                rows.iter()
-                    .filter(|&r| get_ns(r) > 0.0)
-                    .map(|r| 1e9 / get_ns(r)),
-            );
             let mbs = geomean(
                 rows.iter()
                     .filter(|&r| get_ns(r) > 0.0)
                     .map(|r| r.input_size as f64 / get_ns(r) * 1000.0),
             );
-            if let (Some(ops), Some(mbs)) = (ops, mbs) {
-                all_ops.push(ops);
+            if let Some(mbs) = mbs {
                 all_mbs.push(mbs);
-                metrics.insert(((*codec).to_string(), *size), (ops, mbs));
+                metrics.insert(((*codec).to_string(), *size), mbs);
             }
         }
     }
@@ -1289,15 +1285,10 @@ where
         return Ok(());
     }
 
-    let ops_min = all_ops.iter().copied().fold(f64::INFINITY, f64::min) * 0.8;
-    let ops_max = all_ops.iter().copied().fold(0.0, f64::max) * 1.15;
     let mbs_min = all_mbs.iter().copied().fold(f64::INFINITY, f64::min) * 0.8;
     let mbs_max = all_mbs.iter().copied().fold(0.0, f64::max) * 1.15;
-    let ops_log_min = ops_min.log10();
-    let ops_log_range = ops_max.log10() - ops_log_min;
     let mbs_log_min = mbs_min.log10();
     let mbs_log_range = mbs_max.log10() - mbs_log_min;
-    let y_ops = |v: f64| y_bot - (v.log10() - ops_log_min) / ops_log_range * panel_h;
     let y_mbs = |v: f64| y_bot - (v.log10() - mbs_log_min) / mbs_log_range * panel_h;
 
     text(
@@ -1312,24 +1303,12 @@ where
     )?;
     vtext(
         area,
-        "ops/sec",
+        "throughput",
         px(margin_l - 55.0),
         px(panel_top + panel_h / 2.0),
         10,
         TEXT,
     )?;
-    let font = ("sans-serif", 10 + FONT_BUMP)
-        .into_font()
-        .style(FontStyle::Bold)
-        .transform(FontTransform::Rotate90);
-    let style = TextStyle::from(font)
-        .color(&TEXT)
-        .pos(Pos::new(HPos::Center, VPos::Center));
-    area.draw(&Text::new(
-        "throughput".to_string(),
-        (px(x_right + 48.0), px(panel_top + panel_h / 2.0)),
-        style,
-    ))?;
     line(area, margin_l, y_bot, x_right, y_bot, AXIS, 2)?;
     line(area, margin_l, panel_top, margin_l, y_bot, AXIS, 1)?;
     line(area, x_right, panel_top, x_right, y_bot, AXIS, 1)?;
@@ -1349,15 +1328,15 @@ where
         )?;
     }
 
-    for tick in log_ticks(ops_min, ops_max) {
-        let yy = y_ops(tick);
+    for tick in log_ticks(mbs_min, mbs_max) {
+        let yy = y_mbs(tick);
         if yy < panel_top || yy > y_bot {
             continue;
         }
         line(area, margin_l, yy, x_right, yy, GRID, 1)?;
         text(
             area,
-            fmt_ops(tick),
+            fmt_throughput(tick),
             px(margin_l - 7.0),
             px(yy),
             9,
@@ -1366,39 +1345,23 @@ where
             false,
         )?;
     }
-    for tick in log_ticks(mbs_min, mbs_max) {
-        let yy = y_mbs(tick);
-        if yy < panel_top || yy > y_bot {
-            continue;
-        }
-        text(
-            area,
-            fmt_throughput(tick),
-            px(x_right + 7.0),
-            px(yy),
-            9,
-            MUTED,
-            HPos::Left,
-            false,
-        )?;
-    }
-
     for codec in codecs {
-        let Some(style) = cfg.style(codec) else {
+        let base = sweep_base_codec(codec);
+        let Some(style) = cfg.style(base) else {
             continue;
         };
-        let mut pts_ops = Vec::new();
+        let dict = base != *codec;
         let mut pts_mbs = Vec::new();
         for size in sizes {
-            if let Some((ops, mbs)) = metrics.get(&((*codec).to_string(), *size)) {
-                pts_ops.push((x_pos(*size), y_ops(*ops)));
+            if let Some(mbs) = metrics.get(&((*codec).to_string(), *size)) {
                 pts_mbs.push((x_pos(*size), y_mbs(*mbs)));
             }
         }
-        polyline(area, &pts_ops, style.color, 1, 0.55, true)?;
-        polyline(area, &pts_mbs, style.color, 2, 1.0, false)?;
-        for (x, y) in pts_mbs {
-            dot(area, x, y, 2, style.color)?;
+        polyline(area, &pts_mbs, style.color, 2, 1.0, !dict)?;
+        if dict {
+            for (x, y) in pts_mbs {
+                dot(area, x, y, 3, style.color)?;
+            }
         }
     }
     Ok(())
@@ -1778,29 +1741,31 @@ fn draw_sweep_legend(
     x: f64,
     y: f64,
 ) -> Result<(), Box<dyn Error>> {
-    let col_w = 165.0;
+    let col_w = 175.0;
     for (i, codec) in codecs.iter().enumerate() {
         let Some(style) = cfg.style(codec) else {
             continue;
         };
-        let lx = x + i as f64 * col_w;
-        line(area, lx, y, lx + 20.0, y, style.color, 2)?;
+        let lx = x + (i % SWEEP_LEGEND_COLS) as f64 * col_w;
+        let ly = y + (i / SWEEP_LEGEND_COLS) as f64 * LEGEND_ROW_H;
+        rect(area, lx, ly - 6.0, lx + 12.0, ly + 6.0, style.color)?;
         text(
             area,
             codec_label(sweep_label(codec), data, codec),
-            px(lx + 26.0),
-            px(y),
+            px(lx + 18.0),
+            px(ly),
             10,
             TEXT,
             HPos::Left,
             false,
         )?;
     }
-    let style_y = y + 24.0;
+    let style_y = y + codecs.len().div_ceil(SWEEP_LEGEND_COLS) as f64 * LEGEND_ROW_H + 4.0;
     line(area, x, style_y, x + 20.0, style_y, MUTED, 2)?;
+    dot(area, x + 10.0, style_y, 3, MUTED)?;
     text(
         area,
-        "solid = throughput (right axis)",
+        "solid = with dictionary",
         px(x + 26.0),
         px(style_y),
         9,
@@ -1808,10 +1773,10 @@ fn draw_sweep_legend(
         HPos::Left,
         false,
     )?;
-    dashed_line(area, (x + 250.0, style_y), (x + 270.0, style_y), MUTED, 1)?;
+    dashed_line(area, (x + 250.0, style_y), (x + 270.0, style_y), MUTED, 2)?;
     text(
         area,
-        "thin = ops/sec (left axis)",
+        "dashed = no dictionary",
         px(x + 276.0),
         px(style_y),
         9,
@@ -1890,16 +1855,6 @@ fn fmt_size(n: usize) -> String {
     }
 }
 
-fn fmt_ops(v: f64) -> String {
-    if v >= 1e6 {
-        format!("{:.0}M", v / 1e6)
-    } else if v >= 1e3 {
-        format!("{:.0}K", v / 1e3)
-    } else {
-        format!("{v:.0}")
-    }
-}
-
 fn fmt_throughput(v: f64) -> String {
     if v >= 1e3 {
         format!("{:.0} GB/s", v / 1e3)
@@ -1908,12 +1863,16 @@ fn fmt_throughput(v: f64) -> String {
     }
 }
 
+fn sweep_base_codec(codec: &str) -> &str {
+    codec.strip_suffix(" (dict)").unwrap_or(codec)
+}
+
 fn sweep_label(codec: &str) -> &'static str {
     match codec {
         "C lz4" => "lz4 (C)",
-        "C lz4 (dict)" => "lz4 (C) + dict",
         "lz4rip" => "lz4rip",
-        "lz4rip (dict)" => "lz4rip + dict",
+        "lz4_flex unsafe" => "lz4_flex (unsafe)",
+        "lz4_flex" => "lz4_flex (safe)",
         _ => "unknown",
     }
 }
