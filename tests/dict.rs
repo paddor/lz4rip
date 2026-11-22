@@ -210,6 +210,34 @@ fn dict_compressor_ref_reuse() {
     }
 }
 
+/// A dictionary without useful matches must not hide repetitions in a small input.
+#[test]
+fn small_dict_inputs_retain_local_matches() {
+    let dict: Vec<u8> = (0..32).collect();
+    let mut comp = DictCompressor::new(&dict);
+    let mut comp_ref = DictCompressorRef::new(&dict);
+    let decomp = Decompressor::with_dict(&dict);
+
+    for len in [129, 160, 192, 200, 201, 224, 255, 256, 257] {
+        let input: Vec<u8> = b"repeated local payload; "
+            .iter()
+            .copied()
+            .cycle()
+            .take(len)
+            .collect();
+        let compressed = comp.compress(&input);
+        assert!(
+            compressed.len() < len / 2,
+            "{len} bytes: local repetitions produced {} compressed bytes",
+            compressed.len()
+        );
+        let mut out = vec![0; get_maximum_output_size(len)];
+        let n = comp_ref.compress_into(&input, &mut out).unwrap();
+        assert_eq!(out[..n], compressed);
+        assert_eq!(decomp.decompress(&compressed, len).unwrap(), input);
+    }
+}
+
 /// Reuse across main-table epochs: inputs up to 1 KB reuse the main table,
 /// larger ones clear it, and its `u16` positions wrap every 64 KB of input.
 /// Stale entries must act like an empty table, so every block matches a fresh
@@ -221,7 +249,9 @@ fn dict_compressor_epoch_reuse_matches_fresh() {
     let mut reused = DictCompressor::new(&dict);
     let mut reused_ref = DictCompressorRef::new(&dict);
     let decomp = Decompressor::with_dict(&dict);
-    let sizes = [300, 700, 1024, 1500, 4096, 257, 900];
+    let sizes = [
+        127, 128, 129, 200, 201, 255, 256, 257, 700, 900, 1024, 1500, 4096,
+    ];
     for i in 0..400 {
         let size = sizes[i % sizes.len()];
         let start = i * 997 % (corpus.len() - size);

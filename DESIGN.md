@@ -43,7 +43,7 @@ sets memory and the hash shift. It must be a power of two and at least
   2-8 KB inputs 50-70% (text) and 10-25% (XML, records) more than the clear.
   Incompressible input of that size loses 7-26% to the clear.
 - **Dict, dict + input < 64 KB**: a main table for this input, probed first,
-  plus a read-only pristine dict table. Inputs up to 256 B probe only the
+  plus a read-only pristine dict table. Inputs up to 128 B probe only the
   pristine table.
   Inputs up to 1 KB reuse the main table from a per-compressor base that
   advances each call; it is cleared only when positions would pass
@@ -84,12 +84,12 @@ Two `#[inline(never)]` hot loops in `crates/encode/src/compress.rs`.
 | `T: HashTable` | value width and entry count |
 | `USE_DICT` | dictionary lookups (dropped when false) |
 | `HAS_OFFSET` | offset arithmetic for dict positions (zero when false) |
-| `READONLY` | probe the pristine dict table without writing it (inputs ≤ 256 B) |
+| `READONLY` | probe the pristine dict table without writing it (inputs ≤ 128 B) |
 | `NEAR` | dict and input fit one 64 KiB window: no distance test |
 | `S: Sink` | output sink |
 
 `compress_with_dict_table` runs the dual-table dict path, generic over `T` and
-`S`. It probes the pristine table first, then the main table.
+`S`. It probes the main table first, then the pristine table.
 
 The search loop hashes the next position while checking the current one,
 hiding hash latency behind the match branch. C lz4 does the same; lz4_flex
@@ -194,13 +194,12 @@ input-first made output 3-12% smaller at 512 B-32 KiB, compression 3-35%
 faster and decompression 6-19% faster, from fewer, longer matches. Inputs
 from 64 KiB take the single-table path and did not change.
 
-Inputs up to 256 B (`DICT_READONLY_LIMIT`) still probe only the pristine
-table, so they find no matches within themselves. Writing them to the main
-table made their output 11-14% smaller, but compression 4-14% slower and
-decompression 12-24% slower, since matches within the input have short
-offsets. Against C lz4 with the same dict, lz4rip's output is 5-7% larger at
-512 B-8 KiB, about the no-dict gap from skip acceleration, and 15-20% larger
-up to 256 B.
+Inputs up to 128 B (`DICT_READONLY_LIMIT`) probe only the pristine table,
+so they find no matches within themselves. The cutoff was 256 B; lowering
+it lets 129-256 B inputs use the main table and retain those matches.
+Searching the main table requires extra probes and writes, and short-offset
+matches can add decoding work. Compression and roundtrip throughput are
+shown in the [Silesia sweep](doc/charts/x86_64/sweep.svg).
 
 Dict and no-dict are separate types (`DictCompressorRef` vs `CompressorRef`,
 `DictCompressor` vs `Compressor`), not one enum, so a no-dict compressor
