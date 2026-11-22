@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `decompress`, `decompress_append`, and the same methods of `Decompressor`
+  and `DecompressorRef` cap sizes from 128 KiB on at `255 * input.len()`, the
+  most a block can decode to. Before, they trusted the given size, so a size
+  read from a corrupt or hostile header could request gigabytes for a few
+  input bytes. Results and errors do not change.
+- For those sizes they take a fresh output buffer from `alloc_zeroed` instead
+  of writing zeros into it. Since 0.12.0 they touched every byte of the given
+  size up front (since 0.11.11 with `paranoid` and on 32-bit targets).
+
 ## [0.12.4] - 2026-11-22
 
 ### Changed

@@ -171,7 +171,12 @@ messages 7% faster to 4% slower; incompressible messages about equal; Silesia
 
 `decompress_append` and the `Vec`-returning `decompress` zero-fill the new
 bytes (`Vec::resize`), then truncate: 8-14% slower on 256 B-64 KiB blocks
-than decoding into spare capacity.
+than decoding into spare capacity. Callers often read the size from an
+untrusted header, so sizes from 128 KiB on take an out-of-line path that caps
+them at `255 * input.len()`, the most a block can decode to. On that path an
+empty `Vec` that has to grow becomes `vec![0; n]`: `alloc_zeroed` can return
+untouched OS pages, so only decoded bytes cost memory. Smaller sizes pay one
+compare: they have little to waste, and `calloc` skips glibc's thread cache.
 
 `HashTable` and `decompress_internal` are crate-private. The doc-hidden
 `compress_into_sink_with_table` expects a table from the same compression
