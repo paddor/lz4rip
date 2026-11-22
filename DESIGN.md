@@ -56,10 +56,10 @@ sets memory and the hash shift. It must be a power of two and at least
 
 ### Picking a table size
 
-Output size with `N` = 256 vs the default: +1.1% on ~180 B dict messages
-(pristine table only), +0.2% on ~700 B dict messages, ~0% on no-dict inputs up
-to 1 KB, +20-30% on no-dict inputs from 34 KB. Input size drives the cost, not
-the dict: a 2 KB dict fills ~680 buckets, a
+Output size with `N` = 256 vs the default: +0.8% on 180 B Silesia slices with
+a dict, +0.2% on ~700 B dict messages, ~0% on no-dict inputs up to 1 KB,
++20-30% on no-dict inputs from 34 KB. Input size drives the cost, not the
+dict: a 2 KB dict fills ~680 buckets, a
 short message a few hundred more. Small tables are nearly free for small
 messages and often slightly faster (less L1d pressure). Presets: with a dict
 `DictCompressorRefN::<256>` (512 B/table), without `CompressorRefN::<256>` or
@@ -197,9 +197,16 @@ from 64 KiB take the single-table path and did not change.
 Inputs up to 128 B (`DICT_READONLY_LIMIT`) probe only the pristine table,
 so they find no matches within themselves. The cutoff was 256 B; lowering
 it lets 129-256 B inputs use the main table and retain those matches.
-Searching the main table requires extra probes and writes, and short-offset
-matches can add decoding work. Compression and roundtrip throughput are
-shown in the [Silesia sweep](doc/charts/x86_64/sweep.svg).
+
+This trades speed for ratio on purpose. Compressing at 1.5 GB/s is not
+needed, and at 256 B the dict path wrote larger blocks than no-dict. On
+129-256 B Silesia slices with a 2 KB dict, output is 12-16% smaller on
+compressible files and 7-15% on incompressible ones, for 29-70% and 27-45%
+more compress + decompress time. At 256 B on compressible files compression
+drops from 1525 to 895 MB/s, still 2.3x C lz4, and output goes from 14%
+larger to 4% smaller than no-dict. Messages that match mostly in the dict
+gain under 1% and take 10-21% more time. See the
+[Silesia sweep](doc/charts/x86_64/sweep.svg).
 
 Dict and no-dict are separate types (`DictCompressorRef` vs `CompressorRef`,
 `DictCompressor` vs `Compressor`), not one enum, so a no-dict compressor
