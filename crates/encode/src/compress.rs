@@ -39,10 +39,9 @@ const EPOCH_THRESHOLD: usize = 1024;
 const INCREASE_STEPSIZE_BITSHIFT: usize = 3;
 
 /// Inputs up to this size use the dict table read-only: no main table, no
-/// writes. They find no matches within themselves, which costs 11-14% output
-/// size, but writing the table and decoding the short-offset matches it finds
-/// made them 4-14% slower to compress and 12-24% slower to decode (DESIGN.md).
-const DICT_READONLY_LIMIT: usize = 256;
+/// writes. This saves probes and writes but cannot match within the input.
+/// Larger inputs search both tables to retain those matches.
+const DICT_READONLY_LIMIT: usize = 128;
 
 /// Dict inputs up to this size reuse the main table across calls (epoch
 /// reuse) instead of clearing it. Above it, reuse gained nothing on a stream
