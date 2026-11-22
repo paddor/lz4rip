@@ -15,8 +15,10 @@ match is verified against the input bytes, so the output stays valid. The
 decoder copies fixed-size chunks with one length check each. See
 [DESIGN.md](DESIGN.md) for how the checks compile away.
 
-`decompress_append` and the `Vec`-returning `decompress` zero-fill the new
-bytes before decoding into them.
+`decompress_append` and the `Vec`-returning `decompress` decode into zeroed
+bytes. Whatever size the caller passes, they allocate no more than 128 KiB or
+`255 * input.len()` new bytes, whichever is larger. Applications that need a
+lower limit must check the size themselves.
 
 The `paranoid` feature has no effect today. It stays so existing feature
 lists keep building, and as a guarantee: if a later release adds `unsafe`

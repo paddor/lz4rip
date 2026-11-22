@@ -11,7 +11,7 @@ use crate::out::OutSink;
 use crate::primitives::{LONG_CHUNK, MATCH_CHUNK, MIN_COPY_OFFSET, WIDE_CHUNK, idx};
 
 #[cfg(feature = "alloc")]
-use alloc::vec::Vec;
+use alloc::{vec, vec::Vec};
 
 /// Match length bits in the token (low nibble), as in C lz4.
 const ML_BITS: u32 = 4;
@@ -27,6 +27,16 @@ const TOKEN_LEN: usize = 1;
 const OFFSET_LEN: usize = 2;
 /// Bytes in one length extension.
 const EXT_LEN: usize = 1;
+/// Most output one input byte can decode to: a length extension byte adds up
+/// to 255 bytes. Literals are 1:1, and a token with its offset gives at most
+/// 19 match bytes for 3 input bytes.
+#[cfg(feature = "alloc")]
+const MAX_EXPANSION: usize = u8::MAX as usize;
+/// Output limits from here on go through `grow_large_output`. glibc maps
+/// allocations this large from fresh pages by default. Smaller limits have
+/// little memory to waste, and for them `calloc` is slower than `resize`.
+#[cfg(feature = "alloc")]
+const LARGE_OUTPUT: usize = 128 * 1024;
 /// Longest literal a token encodes without an extension byte.
 const SHORT_LITERAL_MAX: usize = RUN_MASK - 1;
 /// Longest match a token encodes without an extension byte.
@@ -523,18 +533,46 @@ fn copy_from_dict(
     Ok(dict_match_length)
 }
 
-/// Decompress into zero-filled new bytes of `output`, then truncate.
+/// Append zeroed bytes for a large `max_size`, capped at what `input_len`
+/// bytes can decode to. Callers often read `max_size` from an untrusted
+/// header. The cap cannot change the result: no length in the input can
+/// exceed it.
+///
+/// An empty `output` that has to grow takes `alloc_zeroed`. Unlike `resize`,
+/// which writes every byte, that can get untouched OS pages, so only decoded
+/// bytes cost memory. Out of line to keep small calls fast.
 #[cfg(feature = "alloc")]
-#[inline]
+#[inline(never)]
+fn grow_large_output(output: &mut Vec<u8>, input_len: usize, max_size: usize) {
+    let size = max_size.min(input_len.saturating_mul(MAX_EXPANSION));
+    let start = output.len();
+    if start == 0 && output.capacity() < size {
+        *output = vec![0; size];
+    } else {
+        output.reserve_exact(size);
+        output.resize(start + size, 0);
+    }
+}
+
+/// Decompress into zeroed new bytes of `output`, then truncate.
+///
+/// Always inline: the size branch otherwise stops LLVM from inlining this
+/// into callers with several decode calls, up to 13% slower on small blocks.
+#[cfg(feature = "alloc")]
+#[inline(always)]
 fn decompress_append_internal<const USE_DICT: bool>(
     input: &[u8],
     output: &mut Vec<u8>,
     max_size: usize,
     ext_dict: &[u8],
 ) -> Result<usize, DecompressError> {
-    output.reserve_exact(max_size);
     let start = output.len();
-    output.resize(start + max_size, 0);
+    if max_size >= LARGE_OUTPUT {
+        grow_large_output(output, input.len(), max_size);
+    } else {
+        output.reserve_exact(max_size);
+        output.resize(start + max_size, 0);
+    }
     let result = decompress_internal::<USE_DICT>(
         input,
         &mut OutSink::new(&mut output[start..], 0),
@@ -553,9 +591,10 @@ pub fn decompress_into(input: &[u8], output: &mut [u8]) -> Result<usize, Decompr
 
 /// Decompress all bytes of `input` and append them to `output`.
 ///
-/// Zero-fills `max_size` new bytes at the end of `output`, decodes into them,
-/// and truncates to the decoded length. `max_size` must be >= the actual
-/// decompressed size. Returns the number of bytes appended. On error,
+/// `max_size` must be >= the actual decompressed size. From 128 KiB on, it is
+/// capped at `255 * input.len()`, the most a block can decode to. Adds that
+/// many zeroed bytes at the end of `output`, decodes into them, and truncates
+/// to the decoded length. Returns the number of bytes appended. On error,
 /// `output` keeps its length and contents.
 #[cfg(feature = "alloc")]
 #[inline]
@@ -569,7 +608,8 @@ pub fn decompress_append(
 
 /// Decompress all bytes of `input` into a new vec.
 ///
-/// `uncompressed_size` must be >= the actual decompressed output size.
+/// `uncompressed_size` must be >= the actual decompressed output size. From
+/// 128 KiB on, the allocation is capped at `255 * input.len()`.
 #[cfg(feature = "alloc")]
 #[inline]
 pub fn decompress(input: &[u8], uncompressed_size: usize) -> Result<Vec<u8>, DecompressError> {
@@ -616,7 +656,8 @@ impl<'a> DecompressorRef<'a> {
 
     /// Decompress `input` into a new `Vec<u8>`.
     ///
-    /// `uncompressed_size` must be >= the actual decompressed size.
+    /// `uncompressed_size` must be >= the actual decompressed size. From
+    /// 128 KiB on, the allocation is capped at `255 * input.len()`.
     #[cfg(feature = "alloc")]
     pub fn decompress(
         &self,
@@ -698,7 +739,8 @@ impl Decompressor {
 
     /// Decompress `input` into a new `Vec<u8>`.
     ///
-    /// `uncompressed_size` must be >= the actual decompressed size.
+    /// `uncompressed_size` must be >= the actual decompressed size. From
+    /// 128 KiB on, the allocation is capped at `255 * input.len()`.
     pub fn decompress(
         &self,
         input: &[u8],
