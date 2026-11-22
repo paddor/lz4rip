@@ -1328,7 +1328,11 @@ fn draw_sweep_panel(
     let log_max = (*sizes.last().unwrap() as f64).log10();
     let x_pos =
         |size: usize| margin_l + ((size as f64).log10() - log_min) / (log_max - log_min) * plot_w;
-    let step = nice_step(value_max, 5);
+    let mut step = nice_step(value_max, 5);
+    if value_max / step <= 3.0 {
+        // The jump from a 2 to a 5 step leaves too few ticks. Allow more lines.
+        step = nice_step(value_max, 7);
+    }
     let tick_count = (value_max / step).ceil() as usize;
     let y_max = tick_count as f64 * step;
     let y_pos = |v: f64| y_bot - v / y_max * panel_h;
