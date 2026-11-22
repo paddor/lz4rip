@@ -4,33 +4,33 @@
 12-file Silesia + Dict 2K: Pipeline @1 GB/s (lower is better)
 </text>
 <text x="260" y="40" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#7D8590">
-Intel Core i7-8700B @ 3.20GHz, 6 cores, performance governor, turbo off, JCC erratum mitigation
+Intel Core i7-8700B @ 3.20GHz, performance governor, turbo off, JCC erratum mitigation
 </text>
 <text x="22" y="151" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="9.67741935483871" opacity="1" fill="#E6EDF3" font-weight="bold" transform="rotate(270, 22, 151)">
 seconds / GB
 </text>
-<polyline fill="none" opacity="1" stroke="#21262D" stroke-width="1" points="70,187 490,187 "/>
-<text x="62" y="187" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#7D8590">
+<polyline fill="none" opacity="1" stroke="#21262D" stroke-width="1" points="70,186 490,186 "/>
+<text x="62" y="186" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#7D8590">
 1.0
 </text>
-<polyline fill="none" opacity="1" stroke="#21262D" stroke-width="1" points="70,134 490,134 "/>
-<text x="62" y="134" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#7D8590">
+<polyline fill="none" opacity="1" stroke="#21262D" stroke-width="1" points="70,132 490,132 "/>
+<text x="62" y="132" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#7D8590">
 2.0
 </text>
-<polyline fill="none" opacity="1" stroke="#21262D" stroke-width="1" points="70,81 490,81 "/>
-<text x="62" y="81" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#7D8590">
+<polyline fill="none" opacity="1" stroke="#21262D" stroke-width="1" points="70,78 490,78 "/>
+<text x="62" y="78" dy="0.5ex" text-anchor="end" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#7D8590">
 3.0
 </text>
 <polyline fill="none" opacity="1" stroke="#30363D" stroke-width="2" points="70,240 490,240 "/>
 <rect x="158" y="127" width="101" height="113" opacity="1" fill="#60A5FA" stroke="none"/>
-<rect x="158" y="102" width="101" height="25" opacity="1" fill="#4680C4" stroke="none"/>
-<rect x="158" y="85" width="101" height="17" opacity="1" fill="#60A5FA" stroke="none"/>
+<rect x="158" y="101" width="101" height="26" opacity="1" fill="#4680C4" stroke="none"/>
+<rect x="158" y="85" width="101" height="16" opacity="1" fill="#60A5FA" stroke="none"/>
 <text x="209" y="258" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#E6EDF3" font-weight="bold">
-lz4 v1.10.0 (C, dict)
+lz4 v1.10.0 (C, dict, <tspan fill="#F85149">unsafe</tspan>)
 </text>
-<rect x="301" y="135" width="101" height="105" opacity="1" fill="#F87171" stroke="none"/>
-<rect x="301" y="109" width="101" height="26" opacity="1" fill="#C45050" stroke="none"/>
-<rect x="301" y="90" width="101" height="19" opacity="1" fill="#F87171" stroke="none"/>
+<rect x="301" y="134" width="101" height="106" opacity="1" fill="#F87171" stroke="none"/>
+<rect x="301" y="108" width="101" height="26" opacity="1" fill="#C45050" stroke="none"/>
+<rect x="301" y="90" width="101" height="18" opacity="1" fill="#F87171" stroke="none"/>
 <text x="351" y="258" dy="0.5ex" text-anchor="middle" font-family="sans-serif" font-size="8.870967741935484" opacity="1" fill="#E6EDF3" font-weight="bold">
 lz4rip (dict)
 </text>
