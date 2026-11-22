@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.12.5] - 2026-11-22
+
+The fix is in `lz4rip-decode` 0.11.2, which this release requires.
+
 ### Fixed
 
 - `decompress`, `decompress_append`, and the same methods of `Decompressor`
