@@ -14,6 +14,7 @@ const AXIS: RGBColor = RGBColor(0x30, 0x36, 0x3d);
 const TEXT: RGBColor = RGBColor(0xe6, 0xed, 0xf3);
 const MUTED: RGBColor = RGBColor(0x7d, 0x85, 0x90);
 const FAINT: RGBColor = RGBColor(0x48, 0x4f, 0x58);
+const UNSAFE: &str = "#F85149";
 
 const FONT_BUMP: u32 = 1;
 const HEADER_SUBTITLE_OFFSET: i32 = 18;
@@ -218,11 +219,16 @@ impl Config {
             target: std::env::consts::ARCH.into(),
             hw_label: detect_hardware(),
             styles: vec![
-                codec("C lz4", "lz4 (C)", 0x60a5fa, 0x4680c4),
+                codec("C lz4", "lz4 (C, unsafe)", 0x60a5fa, 0x4680c4),
                 codec("lz4rip", "lz4rip (safe)", 0xf87171, 0xc45050),
                 codec("lz4_flex unsafe", "lz4_flex (unsafe)", 0xf59e0b, 0xc47d08),
                 codec("lz4_flex", "lz4_flex (safe)", 0x4ade80, 0x3aaf60),
-                codec("C lz4 (dict 2K)", "lz4 (C, dict)", 0x60a5fa, 0x4680c4),
+                codec(
+                    "C lz4 (dict 2K)",
+                    "lz4 (C, dict, unsafe)",
+                    0x60a5fa,
+                    0x4680c4,
+                ),
                 codec("lz4rip (dict 2K)", "lz4rip (dict)", 0xf87171, 0xc45050),
             ],
         }
@@ -323,16 +329,6 @@ fn detect_hardware() -> Option<String> {
     let prefix = std::env::var("LZ4RIP_HW_PREFIX")
         .ok()
         .or_else(|| hw_conf.get("prefix").cloned());
-    let cores = std::thread::available_parallelism()
-        .ok()
-        .map(std::num::NonZero::get);
-
-    if let Some(cpu) = &mut cpu
-        && let Some(cores) = cores
-    {
-        cpu.push_str(&format!(", {cores} cores"));
-    }
-
     let mut parts = Vec::new();
     if let Some(prefix) = prefix.filter(|s| !s.trim().is_empty()) {
         parts.push(prefix);
@@ -801,6 +797,14 @@ fn draw_dict2k(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+struct SweepPanel {
+    title: &'static str,
+    axis: &'static str,
+    value: fn(&BenchRow) -> Option<f64>,
+    format_tick: fn(f64) -> String,
+    shared_y_scale: bool,
+}
+
 fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
     let rows = load_cache_dir(&cache_dir(cfg).join("sweep"));
     let codecs = select_codecs(&rows, SWEEP_CODEC_ORDER);
@@ -836,77 +840,135 @@ fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
         .map(|codec| sweep_base_codec(codec))
         .filter(|codec| seen.insert(*codec))
         .collect::<Vec<_>>();
+    let panels = [
+        SweepPanel {
+            title: "Compress",
+            axis: "throughput",
+            value: |r| (r.compress_ns > 0.0).then(|| r.input_size as f64 / r.compress_ns * 1000.0),
+            format_tick: fmt_throughput,
+            shared_y_scale: false,
+        },
+        SweepPanel {
+            title: "Roundtrip (compress + decompress)",
+            axis: "throughput",
+            value: |r| {
+                let ns = r.compress_ns + r.decompress_ns;
+                (ns > 0.0).then(|| r.input_size as f64 / ns * 1000.0)
+            },
+            format_tick: fmt_throughput,
+            shared_y_scale: false,
+        },
+        SweepPanel {
+            title: "Compression ratio",
+            axis: "ratio (input / compressed)",
+            value: |r| {
+                (r.compressed_size > 0).then(|| r.input_size as f64 / r.compressed_size as f64)
+            },
+            format_tick: |v| format!("{v}×"),
+            shared_y_scale: true,
+        },
+    ];
+    let groups = [
+        ("Compressible", COMPRESSIBLE),
+        ("Incompressible", INCOMPRESSIBLE),
+    ];
     let width = 850;
     let legend_rows = legend_codecs.len().div_ceil(SWEEP_LEGEND_COLS);
-    let height = 780 + (legend_rows - 1) as u32 * LEGEND_ROW_H as u32;
     let margin_l = 80.0;
-    let margin_r = 70.0;
+    let margin_r = 25.0;
     let margin_top = if cfg.hw_label.is_some() { 62.0 } else { 43.0 };
-    let panel_gap = 80.0;
-    let panel_h = 255.0;
-    let plot_w = width as f64 - margin_l - margin_r;
-    let log_min = (sizes[0] as f64).log10();
-    let log_max = (*sizes.last().unwrap() as f64).log10();
-    let x_pos =
-        |size: usize| margin_l + ((size as f64).log10() - log_min) / (log_max - log_min) * plot_w;
+    let panel_gap = 75.0;
+    let panel_h = 200.0;
+    let column_gap = 90.0;
+    let panel_top = margin_top + 50.0;
+    let total_h = panels.len() as f64 * panel_h + (panels.len() - 1) as f64 * panel_gap;
+    let plot_bottom = panel_top + total_h;
+    let height = (plot_bottom + 110.0 + (legend_rows - 1) as f64 * LEGEND_ROW_H) as u32;
+    let plot_w = (width as f64 - margin_l - margin_r - column_gap) / groups.len() as f64;
 
     let path = output_path(out_dir, "sweep.svg");
     let area = root(&path, width, height)?;
     chart_header(
         &area,
         width,
-        "12-file Silesia Slice Sweep: LZ4 throughput (log-log)",
+        "12-file Silesia Slice Sweep: LZ4 (log X, linear Y)",
         cfg.hw_label.as_deref(),
         22,
     )?;
-    let panel1_top = margin_top + 18.0;
-    let panel2_top = panel1_top + panel_h + panel_gap;
-    draw_sweep_panel(
-        cfg,
-        &area,
-        &grouped,
-        &codecs,
-        &sizes,
-        panel1_top,
-        panel_h,
-        margin_l,
-        plot_w,
-        "Compress",
-        |r| r.compress_ns,
-        &x_pos,
-    )?;
-    draw_sweep_panel(
-        cfg,
-        &area,
-        &grouped,
-        &codecs,
-        &sizes,
-        panel2_top,
-        panel_h,
-        margin_l,
-        plot_w,
-        "Roundtrip (compress + decompress)",
-        |r| r.compress_ns + r.decompress_ns,
-        &x_pos,
-    )?;
+    for (gi, (group, files)) in groups.iter().enumerate() {
+        let x_left = margin_l + gi as f64 * (plot_w + column_gap);
+        text(
+            &area,
+            format!("{group} ({} files)", files.len()),
+            px(x_left + plot_w / 2.0),
+            px(panel_top - 40.0),
+            13,
+            TEXT,
+            HPos::Center,
+            true,
+        )?;
+        text(
+            &area,
+            "input slice size",
+            px(x_left + plot_w / 2.0),
+            px(plot_bottom + 32.0),
+            11,
+            TEXT,
+            HPos::Center,
+            true,
+        )?;
+    }
+    for (i, panel) in panels.iter().enumerate() {
+        let metrics = groups.map(|(_, files)| {
+            grouped
+                .iter()
+                .filter_map(|(key, rows)| {
+                    let value = geomean(
+                        rows.iter()
+                            .filter(|r| {
+                                r.input
+                                    .rsplit_once('_')
+                                    .is_some_and(|(file, _)| files.contains(&file))
+                            })
+                            .filter_map(panel.value),
+                    )?;
+                    Some((key.clone(), value))
+                })
+                .collect::<BTreeMap<_, _>>()
+        });
+        for (gi, group_metrics) in metrics.iter().enumerate() {
+            let value_max = if panel.shared_y_scale {
+                metrics
+                    .iter()
+                    .flat_map(|group| group.values())
+                    .copied()
+                    .fold(0.0, f64::max)
+            } else {
+                group_metrics.values().copied().fold(0.0, f64::max)
+            } * 1.15;
+            draw_sweep_panel(
+                cfg,
+                &area,
+                group_metrics,
+                &codecs,
+                &sizes,
+                panel_top + i as f64 * (panel_h + panel_gap),
+                panel_h,
+                margin_l + gi as f64 * (plot_w + column_gap),
+                plot_w,
+                panel,
+                value_max,
+            )?;
+        }
+    }
 
-    text(
-        &area,
-        "input slice size",
-        px(width as f64 / 2.0),
-        px(panel2_top + panel_h + 32.0),
-        11,
-        TEXT,
-        HPos::Center,
-        true,
-    )?;
     draw_sweep_legend(
         &area,
         cfg,
         &rows,
         &legend_codecs,
         margin_l,
-        panel2_top + panel_h + 56.0,
+        plot_bottom + 56.0,
     )?;
     area.present()?;
     drop(area);
@@ -1243,58 +1305,38 @@ fn draw_small(cfg: &Config, out_dir: &Path, decode: bool) -> Result<(), Box<dyn 
     Ok(())
 }
 
-fn draw_sweep_panel<F>(
+fn draw_sweep_panel(
     cfg: &Config,
     area: &Area<'_>,
-    grouped: &BTreeMap<(String, usize), Vec<BenchRow>>,
+    metrics: &BTreeMap<(String, usize), f64>,
     codecs: &[&str],
     sizes: &[usize],
     panel_top: f64,
     panel_h: f64,
     margin_l: f64,
     plot_w: f64,
-    title: &str,
-    get_ns: F,
-    x_pos: &dyn Fn(usize) -> f64,
-) -> Result<(), Box<dyn Error>>
-where
-    F: Fn(&BenchRow) -> f64,
-{
+    panel: &SweepPanel,
+    value_max: f64,
+) -> Result<(), Box<dyn Error>> {
     let y_bot = panel_top + panel_h;
     let x_right = margin_l + plot_w;
-    let mut metrics: BTreeMap<(String, usize), f64> = BTreeMap::new();
-    let mut all_mbs = Vec::new();
-
-    for codec in codecs {
-        for size in sizes {
-            let Some(rows) = grouped.get(&((*codec).to_string(), *size)) else {
-                continue;
-            };
-            let mbs = geomean(
-                rows.iter()
-                    .filter(|&r| get_ns(r) > 0.0)
-                    .map(|r| r.input_size as f64 / get_ns(r) * 1000.0),
-            );
-            if let Some(mbs) = mbs {
-                all_mbs.push(mbs);
-                metrics.insert(((*codec).to_string(), *size), mbs);
-            }
-        }
-    }
     if metrics.is_empty() {
         return Ok(());
     }
 
-    let mbs_min = all_mbs.iter().copied().fold(f64::INFINITY, f64::min) * 0.8;
-    let mbs_max = all_mbs.iter().copied().fold(0.0, f64::max) * 1.15;
-    let mbs_log_min = mbs_min.log10();
-    let mbs_log_range = mbs_max.log10() - mbs_log_min;
-    let y_mbs = |v: f64| y_bot - (v.log10() - mbs_log_min) / mbs_log_range * panel_h;
+    let log_min = (sizes[0] as f64).log10();
+    let log_max = (*sizes.last().unwrap() as f64).log10();
+    let x_pos =
+        |size: usize| margin_l + ((size as f64).log10() - log_min) / (log_max - log_min) * plot_w;
+    let step = nice_step(value_max, 5);
+    let tick_count = (value_max / step).ceil() as usize;
+    let y_max = tick_count as f64 * step;
+    let y_pos = |v: f64| y_bot - v / y_max * panel_h;
 
     text(
         area,
-        title,
-        px(425.0),
+        panel.title,
+        px(margin_l + plot_w / 2.0),
         px(panel_top - 13.0),
         12,
         TEXT,
@@ -1303,7 +1345,7 @@ where
     )?;
     vtext(
         area,
-        "throughput",
+        panel.axis,
         px(margin_l - 55.0),
         px(panel_top + panel_h / 2.0),
         10,
@@ -1328,15 +1370,16 @@ where
         )?;
     }
 
-    for tick in log_ticks(mbs_min, mbs_max) {
-        let yy = y_mbs(tick);
+    for i in 0..=tick_count {
+        let tick = i as f64 * step;
+        let yy = y_pos(tick);
         if yy < panel_top || yy > y_bot {
             continue;
         }
         line(area, margin_l, yy, x_right, yy, GRID, 1)?;
         text(
             area,
-            fmt_throughput(tick),
+            (panel.format_tick)(tick),
             px(margin_l - 7.0),
             px(yy),
             9,
@@ -1351,15 +1394,15 @@ where
             continue;
         };
         let dict = base != *codec;
-        let mut pts_mbs = Vec::new();
+        let mut points = Vec::new();
         for size in sizes {
-            if let Some(mbs) = metrics.get(&((*codec).to_string(), *size)) {
-                pts_mbs.push((x_pos(*size), y_mbs(*mbs)));
+            if let Some(value) = metrics.get(&((*codec).to_string(), *size)) {
+                points.push((x_pos(*size), y_pos(*value)));
             }
         }
-        polyline(area, &pts_mbs, style.color, 2, 1.0, !dict)?;
+        polyline(area, &points, style.color, 2, 1.0, !dict)?;
         if dict {
-            for (x, y) in pts_mbs {
+            for (x, y) in points {
                 dot(area, x, y, 3, style.color)?;
             }
         }
@@ -1438,6 +1481,10 @@ fn finish_svg(path: &Path, width: u32, height: u32) -> Result<(), Box<dyn Error>
         "xmlns=\"http://www.w3.org/2000/svg\"",
         "xmlns=\"http://www.w3.org/2000/svg\" font-family=\"system-ui, -apple-system, sans-serif\"",
         1,
+    );
+    svg = svg.replace(
+        "unsafe",
+        &format!("<tspan fill=\"{UNSAFE}\">unsafe</tspan>"),
     );
     std::fs::write(path, svg)?;
     Ok(())
@@ -1765,7 +1812,7 @@ fn draw_sweep_legend(
     dot(area, x + 10.0, style_y, 3, MUTED)?;
     text(
         area,
-        "solid = with dictionary",
+        "solid = with 2 KiB dictionary",
         px(x + 26.0),
         px(style_y),
         9,
@@ -1857,7 +1904,7 @@ fn fmt_size(n: usize) -> String {
 
 fn fmt_throughput(v: f64) -> String {
     if v >= 1e3 {
-        format!("{:.0} GB/s", v / 1e3)
+        format!("{} GB/s", v / 1e3)
     } else {
         format!("{v:.0} MB/s")
     }
@@ -1869,7 +1916,7 @@ fn sweep_base_codec(codec: &str) -> &str {
 
 fn sweep_label(codec: &str) -> &'static str {
     match codec {
-        "C lz4" => "lz4 (C)",
+        "C lz4" => "lz4 (C, unsafe)",
         "lz4rip" => "lz4rip",
         "lz4_flex unsafe" => "lz4_flex (unsafe)",
         "lz4_flex" => "lz4_flex (safe)",
