@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.12.4] - 2026-11-22
+
+### Changed
+
+- Dictionary compression finds matches within 129-256 B inputs too
+  (`DICT_READONLY_LIMIT` is now 128 B, was 256 B). With a 2 KB dict, output
+  of 129-256 B Silesia slices is 12-16% smaller on compressible files and
+  7-15% on incompressible ones. At 256 B it is now smaller than no-dict
+  output.
+  This trades speed for ratio on purpose: compress + decompress takes
+  29-70% and 27-45% longer. At 256 B on compressible files, compression
+  drops from 1525 to 895 MB/s, still 2.3x C lz4 (x86_64). Messages that
+  match mostly in the dict gain under 1% and take 10-21% longer.
+  Output differs from 0.12.3 for these sizes. Other sizes and no-dict
+  compression are unchanged.
+
 ## [0.12.3] - 2026-11-18
 
 ### Changed
