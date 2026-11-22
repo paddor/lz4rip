@@ -555,8 +555,11 @@ fn grow_large_output(output: &mut Vec<u8>, input_len: usize, max_size: usize) {
 }
 
 /// Decompress into zeroed new bytes of `output`, then truncate.
+///
+/// Always inline: the size branch otherwise stops LLVM from inlining this
+/// into callers with several decode calls, up to 13% slower on small blocks.
 #[cfg(feature = "alloc")]
-#[inline]
+#[inline(always)]
 fn decompress_append_internal<const USE_DICT: bool>(
     input: &[u8],
     output: &mut Vec<u8>,

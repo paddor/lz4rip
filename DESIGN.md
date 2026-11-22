@@ -177,6 +177,9 @@ them at `255 * input.len()`, the most a block can decode to. On that path an
 empty `Vec` that has to grow becomes `vec![0; n]`: `alloc_zeroed` can return
 untouched OS pages, so only decoded bytes cost memory. Smaller sizes pay one
 compare: they have little to waste, and `calloc` skips glibc's thread cache.
+That needs `#[inline(always)]` on `decompress_append_internal`. With only
+`#[inline]`, the branch stopped LLVM from inlining it into callers with
+several decode calls, which made small blocks up to 13% slower.
 
 `HashTable` and `decompress_internal` are crate-private. The doc-hidden
 `compress_into_sink_with_table` expects a table from the same compression
