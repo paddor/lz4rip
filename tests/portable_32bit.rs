@@ -134,6 +134,15 @@ fn compressed_output_is_target_independent() {
     let large = word_salad(96 * 1024, 2);
     actual.push(("compress 96K", digest(&lz4rip::block::compress(&large))));
 
+    for (name, len, seed) in [
+        ("compress_ratio 4K", 4 * 1024, 8),
+        ("compress_ratio 32K", 32 * 1024, 9),
+        ("compress_ratio 96K", 96 * 1024, 10),
+    ] {
+        let input = word_salad(len, seed);
+        actual.push((name, digest(&lz4rip::block::compress_ratio(&input))));
+    }
+
     let msgs = word_salad(8 * 1024, 3);
     let mut compressor = lz4rip::block::Compressor::new();
     let mut out = Vec::new();
@@ -165,15 +174,26 @@ fn compressed_output_is_target_independent() {
         encoder.write_all(&word_salad(160 * 1024, 7)).unwrap();
         encoder.finish().unwrap();
         actual.push(("frame linked 160K", digest(&out)));
+
+        let mut out = Vec::new();
+        let mut encoder =
+            lz4rip::frame::FrameEncoder::with_frame_info(frame_info, &mut out).ratio_profile();
+        encoder.write_all(&word_salad(160 * 1024, 7)).unwrap();
+        encoder.finish().unwrap();
+        actual.push(("ratio frame linked 160K", digest(&out)));
     }
 
     let expected: &[(&str, (usize, u64))] = &[
         ("compress 4K", (2083, 0xa77a_38b6_fd13_5474)),
         ("compress 96K", (45256, 0x7740_2478_7216_398b)),
+        ("compress_ratio 4K", (2090, 0x6893_bc7d_3ffc_f386)),
+        ("compress_ratio 32K", (15011, 0xbf7e_fca4_6a54_076b)),
+        ("compress_ratio 96K", (43868, 0xbbbf_dc65_7183_c9c8)),
         ("Compressor 8x1K", (5062, 0x034f_e6ef_6b8c_ea2a)),
         ("dict", (2048, 0x490c_2e96_5d2b_e7bf)),
         ("DictCompressor", (33351, 0x869e_798e_207c_12f1)),
         ("frame linked 160K", (74618, 0x5235_69e2_f3e5_810f)),
+        ("ratio frame linked 160K", (72649, 0xd62c_c626_c908_42ca)),
     ];
     for (name, got) in &actual {
         let (_, want) = expected.iter().find(|(n, _)| n == name).unwrap();

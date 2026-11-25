@@ -39,17 +39,18 @@ fuzz_target!(|input: Input| {
             lz4rip::frame::BlockSize::Max1MB,
             lz4rip::frame::BlockSize::Max4MB,
         ] {
-            for check_sum in &[true, false] {
+            for (check_sum, ratio) in [(true, false), (false, false), (true, true)] {
                 // io::Write
                 let mut fi = lz4rip::frame::FrameInfo::default();
                 fi.block_mode = *bm;
                 fi.block_size = *bs;
-                fi.block_checksums = *check_sum;
-                fi.content_checksum = *check_sum;
-                let mut enc = lz4rip::frame::FrameEncoder::with_frame_info(
-                    fi,
-                    Vec::with_capacity(data_size),
-                );
+                fi.block_checksums = check_sum;
+                fi.content_checksum = check_sum;
+                let mut enc =
+                    lz4rip::frame::FrameEncoder::with_frame_info(fi, Vec::with_capacity(data_size));
+                if ratio {
+                    enc = enc.ratio_profile();
+                }
                 for chunk in data.chunks(chunk_size) {
                     enc.write(chunk).unwrap();
                     // by flushing we force encoder to output a frame block

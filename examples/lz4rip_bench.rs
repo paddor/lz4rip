@@ -6,12 +6,17 @@ extern crate lz4_flex_upstream;
 // `crates/bench-app`.
 use lz4rip_bench_app as app;
 use std::io::Write;
-use std::os::raw::c_int;
+use std::os::raw::{c_int, c_void};
 use std::path::PathBuf;
 use std::process::Command;
 
 #[repr(C)]
 struct LZ4Stream {
+    _opaque: [u8; 0],
+}
+
+#[repr(C)]
+struct LZ4StreamHC {
     _opaque: [u8; 0],
 }
 
@@ -28,6 +33,16 @@ unsafe extern "C" {
         src_size: c_int,
         dst_capacity: c_int,
         acceleration: c_int,
+    ) -> c_int;
+    fn LZ4_createStreamHC() -> *mut LZ4StreamHC;
+    fn LZ4_freeStreamHC(stream: *mut LZ4StreamHC) -> c_int;
+    fn LZ4_compress_HC_extStateHC_fastReset(
+        state: *mut c_void,
+        src: *const u8,
+        dst: *mut u8,
+        src_size: c_int,
+        dst_capacity: c_int,
+        level: c_int,
     ) -> c_int;
     fn LZ4_decompress_safe_usingDict(
         src: *const u8,
@@ -541,6 +556,10 @@ const LZ4RIP_CODEC: &str = "lz4rip";
 const LZ4RIP_DICT_CODEC: &str = "lz4rip (dict 2K)";
 
 const CODECS: &[&str] = &["C lz4", "lz4rip", "lz4_flex", "lz4_flex unsafe"];
+
+/// `--ratio` codecs: C lz4's MID mode (HC level 2) and lz4rip's ratio profile.
+const RATIO_CODECS: &[&str] = &["C lz4 HC 2", "lz4rip ratio"];
+const C_LZ4_MID_LEVEL: c_int = 2;
 const DICT_CODECS: &[&str] = &["C lz4 (dict 2K)", "lz4rip (dict 2K)"];
 
 const SILESIA_DOWNLOADS: &[(&str, &str)] = &[
@@ -791,6 +810,32 @@ fn small_encode(codec: &str, slices: &[&[u8]], target_ns: u64) -> (f64, Vec<Vec<
             unsafe { LZ4_freeStream(stream) };
             (ns, blocks)
         }
+        "C lz4 HC 2" => {
+            let stream = unsafe { LZ4_createStreamHC() };
+            assert!(!stream.is_null());
+            let result = time_encode(slices, &mut out, target_ns, |d, o| {
+                let n = unsafe {
+                    LZ4_compress_HC_extStateHC_fastReset(
+                        stream.cast(),
+                        d.as_ptr(),
+                        o.as_mut_ptr(),
+                        d.len() as c_int,
+                        o.len() as c_int,
+                        C_LZ4_MID_LEVEL,
+                    )
+                };
+                assert!(n > 0, "C lz4 HC compress failed");
+                n as usize
+            });
+            unsafe { LZ4_freeStreamHC(stream) };
+            result
+        }
+        "lz4rip ratio" => {
+            let mut compressor = app::lz4rip::RatioCompressor::new();
+            time_encode(slices, &mut out, target_ns, |d, o| {
+                compressor.compress_into(d, o).unwrap()
+            })
+        }
         "lz4_flex unsafe" => time_encode(slices, &mut out, target_ns, |d, o| {
             app::lz4_flex_unsafe::compress_into(d, o).unwrap()
         }),
@@ -832,7 +877,7 @@ fn time_encode(
 /// each one restores its slice. Returns the time per pass.
 fn small_decode(codec: &str, blocks: &[Vec<u8>], slices: &[&[u8]], target_ns: u64) -> f64 {
     match codec {
-        "C lz4" => time_decode(codec, blocks, slices, target_ns, |b, o| {
+        "C lz4" | "C lz4 HC 2" => time_decode(codec, blocks, slices, target_ns, |b, o| {
             lzzzz::lz4::decompress(b, o).unwrap()
         }),
         "lz4_flex unsafe" => time_decode(codec, blocks, slices, target_ns, |b, o| {
@@ -994,6 +1039,44 @@ fn run_structured(only: &[String], inputs: &[(String, Vec<u8>)]) {
     save_results_to("structured", &all_results);
 }
 
+/// `--ratio`: `RATIO_CODECS` on the `--sweep` slice sizes (cache
+/// `ratio/sweep/`), with reused state. Each codec decodes its own output.
+fn run_ratio(only: &[String], inputs: &[(String, Vec<u8>)]) {
+    let target_ns = 20_000_000u64;
+    let codecs: Vec<&str> = RATIO_CODECS
+        .iter()
+        .copied()
+        .filter(|c| only.is_empty() || only.iter().any(|o| c.contains(o.as_str())))
+        .collect();
+    let row = |codec: &str, name: &str, slices: &[&[u8]]| {
+        let (compress_ns, blocks) = small_encode(codec, slices, target_ns);
+        let decompress_ns = small_decode(codec, &blocks, slices, target_ns);
+        let r = per_message(codec, name, slices, &blocks, compress_ns, decompress_ns);
+        eprintln!(
+            "  {codec} x {name} ({} slices): {:.0} ns comp, {:.0} ns decomp",
+            slices.len(),
+            r.compress_ns,
+            r.decompress_ns
+        );
+        r
+    };
+
+    let mut sweep = Vec::new();
+    for &size in SWEEP_SIZES {
+        for (source_name, source) in inputs {
+            let slices = rotating_slices(source, size);
+            if slices.is_empty() {
+                continue;
+            }
+            let name = prefixed_input_name(source_name, size);
+            for &codec in &codecs {
+                sweep.push(row(codec, &name, &slices));
+            }
+        }
+    }
+    save_results_to("ratio/sweep", &sweep);
+}
+
 fn run_structured_dict(only: &[String], inputs: &[(String, Vec<u8>)], dict: &[u8]) {
     let target_ns = 20_000_000u64;
     let dict_codecs: &[&str] = &["C lz4 (dict 2K)", "lz4rip (dict 2K)"];
@@ -1042,6 +1125,7 @@ fn main() {
     let mut structured = false;
     let mut structured_dict = false;
     let mut small = false;
+    let mut ratio = false;
     let mut file_filter: Vec<String> = Vec::new();
     let mut extra_files: Vec<String> = Vec::new();
     let mut i = 1;
@@ -1079,6 +1163,9 @@ fn main() {
             "--small" => {
                 small = true;
             }
+            "--ratio" => {
+                ratio = true;
+            }
             "--files" => {
                 i += 1;
                 if i < args.len() {
@@ -1099,6 +1186,12 @@ fn main() {
     if small {
         let inputs = load_silesia_inputs();
         run_small(&only, &inputs);
+        return;
+    }
+
+    if ratio {
+        let inputs = load_silesia_inputs();
+        run_ratio(&only, &inputs);
         return;
     }
 

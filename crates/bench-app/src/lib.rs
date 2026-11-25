@@ -42,6 +42,26 @@ pub mod lz4rip {
         }
     }
 
+    /// [`lz4rip::block::RatioCompressor`].
+    #[derive(Debug, Default)]
+    pub struct RatioCompressor(lz4rip::block::RatioCompressor);
+
+    impl RatioCompressor {
+        /// Create a compressor.
+        pub fn new() -> Self {
+            Self(lz4rip::block::RatioCompressor::new())
+        }
+
+        /// Compress `input` into `output`.
+        pub fn compress_into(
+            &mut self,
+            input: &[u8],
+            output: &mut [u8],
+        ) -> Result<usize, CompressError> {
+            self.0.compress_into(input, output)
+        }
+    }
+
     /// [`lz4rip::block::DictCompressor`].
     #[derive(Debug)]
     pub struct DictCompressor(lz4rip::block::DictCompressor);

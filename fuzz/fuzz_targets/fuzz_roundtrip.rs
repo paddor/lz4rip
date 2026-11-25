@@ -8,6 +8,13 @@ struct Input {
     data: Vec<u8>,
     #[arbitrary(with = |u: &mut arbitrary::Unstructured| u.int_in_range(1..=8u8))]
     repeat: u8,
+    /// Chunk size for the reused `RatioCompressor`.
+    #[arbitrary(with = |u: &mut arbitrary::Unstructured| u.int_in_range(1..=600u16))]
+    chunk: u16,
+    /// Passes over the chunks: up to 96 KiB through one compressor, enough
+    /// to wrap its small table's `u16` positions.
+    #[arbitrary(with = |u: &mut arbitrary::Unstructured| u.int_in_range(1..=3u8))]
+    rounds: u8,
 }
 
 fuzz_target!(|input: Input| {
@@ -29,4 +36,18 @@ fuzz_target!(|input: Input| {
     let mut decomp_buf = vec![0u8; payload.len()];
     let decomp_len = decompress_into(&comp_buf[..comp_len], &mut decomp_buf).unwrap();
     assert_eq!(&payload[..], &decomp_buf[..decomp_len]);
+
+    // ratio profile: one-shot and reusable compressor give the same output
+    let ratio = lz4rip::compress_ratio(&payload);
+    assert_eq!(decompress(&ratio, payload.len()).unwrap(), payload);
+    let mut comp = lz4rip::block::RatioCompressor::new();
+    assert_eq!(comp.compress(&payload), ratio);
+
+    // One compressor over many chunks, as in a hot loop: chunks up to 256 B
+    // reuse its table, larger ones clear it.
+    for _ in 0..input.rounds {
+        for c in payload.chunks(input.chunk as usize) {
+            assert_eq!(comp.compress(c), lz4rip::compress_ratio(c));
+        }
+    }
 });

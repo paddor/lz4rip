@@ -41,6 +41,72 @@ const SWEEP_CODEC_ORDER: &[&str] = &[
     "lz4_flex",
 ];
 const SWEEP_LEGEND_COLS: usize = 4;
+const RATIO_CODEC_ORDER: &[&str] = &["C lz4 HC 2", "lz4rip ratio"];
+
+/// A codec drawn in faint gray, as a reference point for the others. Its
+/// rows come from another chart's cache.
+struct Reference {
+    codec: &'static str,
+    label: &'static str,
+    cache: &'static str,
+}
+
+impl Reference {
+    fn style(&self) -> CodecStyle {
+        codec(self.codec, self.label, 0x6e7681, 0x3d444d)
+    }
+
+    /// `rows` plus the reference rows from its cache.
+    fn add_rows(&self, rows: &mut Vec<BenchRow>, dir: &Path) {
+        rows.retain(|r| r.codec != self.codec);
+        rows.extend(
+            load_cache_dir(&dir.join(self.cache))
+                .into_iter()
+                .filter(|r| r.codec == self.codec),
+        );
+    }
+}
+
+/// lz4rip's default mode on the ratio sweep, from the `--sweep` rows.
+const LZ4RIP_REFERENCE: Reference = Reference {
+    codec: "lz4rip",
+    label: "lz4rip default",
+    cache: "sweep",
+};
+
+/// A slice sweep chart: compress, roundtrip and ratio over slice sizes.
+struct SweepChart {
+    file: &'static str,
+    title: &'static str,
+    codecs: &'static [&'static str],
+    cache: &'static str,
+    bench: &'static str,
+    /// Dashed lines without a dictionary, solid lines with dots with one.
+    /// Otherwise every line is solid with dots.
+    dict_styles: bool,
+    /// Drawn as a faint dashed line under the others.
+    reference: Option<Reference>,
+}
+
+const MAIN_SWEEP: SweepChart = SweepChart {
+    file: "sweep.svg",
+    title: "12-file Silesia Slice Sweep: LZ4 (log X, linear Y)",
+    codecs: SWEEP_CODEC_ORDER,
+    cache: "sweep",
+    bench: "cargo run --release --example lz4rip_bench -- --sweep",
+    dict_styles: true,
+    reference: None,
+};
+
+const RATIO_SWEEP: SweepChart = SweepChart {
+    file: "ratio_sweep.svg",
+    title: "12-file Silesia Slice Sweep: LZ4 Ratio Modes (log X, linear Y)",
+    codecs: RATIO_CODEC_ORDER,
+    cache: "ratio/sweep",
+    bench: "cargo run --release --example lz4rip_bench -- --ratio",
+    dict_styles: false,
+    reference: Some(LZ4RIP_REFERENCE),
+};
 const STRUCTURED_CODEC_ORDER: &[&str] = &["C lz4", "lz4rip", "lz4_flex unsafe", "lz4_flex"];
 const STRUCTURED_DICT_CODEC_ORDER: &[&str] = &["C lz4 (dict 2K)", "lz4rip (dict 2K)"];
 
@@ -101,7 +167,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             draw_pipeline(&cfg, &out_dir)?;
             draw_summary(&cfg, &out_dir)?;
             draw_dict2k(&cfg, &out_dir)?;
-            draw_sweep(&cfg, &out_dir)?;
+            draw_sweep(&cfg, &out_dir, &MAIN_SWEEP)?;
+            draw_sweep(&cfg, &out_dir, &RATIO_SWEEP)?;
             let structured_dir = out_dir.join("structured");
             std::fs::create_dir_all(&structured_dir)?;
             draw_structured(&cfg, &structured_dir, false)?;
@@ -125,13 +192,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             std::fs::create_dir_all(&out_dir)?;
             draw_summary(&cfg, &out_dir)?;
         }
+        ChartKind::Ratio => {
+            std::fs::create_dir_all(&out_dir)?;
+            draw_sweep(&cfg, &out_dir, &RATIO_SWEEP)?;
+        }
         ChartKind::Dict2k => {
             std::fs::create_dir_all(&out_dir)?;
             draw_dict2k(&cfg, &out_dir)?;
         }
         ChartKind::Sweep => {
             std::fs::create_dir_all(&out_dir)?;
-            draw_sweep(&cfg, &out_dir)?;
+            draw_sweep(&cfg, &out_dir, &MAIN_SWEEP)?;
         }
         ChartKind::Structured => {
             std::fs::create_dir_all(&out_dir)?;
@@ -158,6 +229,7 @@ enum ChartKind {
     Summary,
     Dict2k,
     Sweep,
+    Ratio,
     Structured,
     StructuredNoDict,
     StructuredDict2k,
@@ -193,7 +265,7 @@ impl Args {
 
 fn print_help() {
     println!(
-        "Usage: lz4rip_charts [all|summary|pipeline|dict2k|sweep|structured|structured-no-dict|structured-dict2k|small-encode|small-decode] [OUT_DIR]"
+        "Usage: lz4rip_charts [all|summary|pipeline|dict2k|sweep|ratio|structured|structured-no-dict|structured-dict2k|small-encode|small-decode] [OUT_DIR]"
     );
 }
 
@@ -204,6 +276,7 @@ fn parse_chart_kind(s: &str) -> Option<ChartKind> {
         "pipeline" => Some(ChartKind::Pipeline),
         "dict2k" => Some(ChartKind::Dict2k),
         "sweep" => Some(ChartKind::Sweep),
+        "ratio" => Some(ChartKind::Ratio),
         "structured" => Some(ChartKind::Structured),
         "structured-no-dict" | "structured_no_dict" => Some(ChartKind::StructuredNoDict),
         "structured-dict2k" | "structured_dict2k" => Some(ChartKind::StructuredDict2k),
@@ -230,6 +303,13 @@ impl Config {
                     0x4680c4,
                 ),
                 codec("lz4rip (dict 2K)", "lz4rip (dict)", 0xf87171, 0xc45050),
+                codec(
+                    "C lz4 HC 2",
+                    "lz4 HC level 2 (C, unsafe)",
+                    0x60a5fa,
+                    0x4680c4,
+                ),
+                codec("lz4rip ratio", "lz4rip ratio (safe)", 0xf87171, 0xc45050),
             ],
         }
     }
@@ -237,6 +317,17 @@ impl Config {
     fn style(&self, key: &str) -> Option<&CodecStyle> {
         self.styles.iter().find(|s| s.key == key)
     }
+}
+
+/// The style of `key`: `reference` if it is that codec, else its own.
+fn chart_style<'a>(
+    cfg: &'a Config,
+    reference: Option<&'a CodecStyle>,
+    key: &str,
+) -> Option<&'a CodecStyle> {
+    reference
+        .filter(|r| r.key == key)
+        .or_else(|| cfg.style(key))
 }
 
 fn codec(key: &'static str, label: &'static str, color: u32, dim: u32) -> CodecStyle {
@@ -805,16 +896,33 @@ struct SweepPanel {
     shared_y_scale: bool,
 }
 
-fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
-    let rows = load_cache_dir(&cache_dir(cfg).join("sweep"));
-    let codecs = select_codecs(&rows, SWEEP_CODEC_ORDER);
+fn draw_sweep(cfg: &Config, out_dir: &Path, chart: &SweepChart) -> Result<(), Box<dyn Error>> {
+    let mut rows = load_cache_dir(&cache_dir(cfg).join(chart.cache));
+    let codecs = select_codecs(&rows, chart.codecs);
     if codecs.is_empty() {
-        return Err("sweep: no cache rows. Run `cargo run --release --example lz4rip_bench -- --sweep` first.".into());
+        return Err(format!(
+            "{}: no cache rows. Run `{}` first.",
+            chart.file, chart.bench
+        )
+        .into());
     }
+    if let Some(r) = &chart.reference {
+        r.add_rows(&mut rows, &cache_dir(cfg));
+    }
+    let reference = chart.reference.as_ref().map(Reference::style);
+    let reference_key = reference
+        .as_ref()
+        .map(|r| r.key)
+        .filter(|key| rows.iter().any(|r| r.codec == *key));
+    // The reference first, so the compared codecs draw over it.
+    let lines = reference_key
+        .into_iter()
+        .chain(codecs.iter().copied())
+        .collect::<Vec<_>>();
 
     let mut grouped: BTreeMap<(String, usize), Vec<BenchRow>> = BTreeMap::new();
     for row in &rows {
-        if codecs.iter().any(|c| row.codec == *c) {
+        if lines.iter().any(|c| row.codec == *c) {
             grouped
                 .entry((row.codec.clone(), row.input_size))
                 .or_default()
@@ -839,6 +947,7 @@ fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
         .iter()
         .map(|codec| sweep_base_codec(codec))
         .filter(|codec| seen.insert(*codec))
+        .chain(reference_key)
         .collect::<Vec<_>>();
     let panels = [
         SweepPanel {
@@ -886,15 +995,9 @@ fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
     let height = (plot_bottom + 110.0 + (legend_rows - 1) as f64 * LEGEND_ROW_H) as u32;
     let plot_w = (width as f64 - margin_l - margin_r - column_gap) / groups.len() as f64;
 
-    let path = output_path(out_dir, "sweep.svg");
+    let path = output_path(out_dir, chart.file);
     let area = root(&path, width, height)?;
-    chart_header(
-        &area,
-        width,
-        "12-file Silesia Slice Sweep: LZ4 (log X, linear Y)",
-        cfg.hw_label.as_deref(),
-        22,
-    )?;
+    chart_header(&area, width, chart.title, cfg.hw_label.as_deref(), 22)?;
     for (gi, (group, files)) in groups.iter().enumerate() {
         let x_left = margin_l + gi as f64 * (plot_w + column_gap);
         text(
@@ -948,9 +1051,10 @@ fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
             } * 1.15;
             draw_sweep_panel(
                 cfg,
+                reference.as_ref(),
                 &area,
                 group_metrics,
-                &codecs,
+                &lines,
                 &sizes,
                 panel_top + i as f64 * (panel_h + panel_gap),
                 panel_h,
@@ -958,6 +1062,7 @@ fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
                 plot_w,
                 panel,
                 value_max,
+                chart.dict_styles,
             )?;
         }
     }
@@ -965,10 +1070,12 @@ fn draw_sweep(cfg: &Config, out_dir: &Path) -> Result<(), Box<dyn Error>> {
     draw_sweep_legend(
         &area,
         cfg,
+        chart.reference.as_ref(),
         &rows,
         &legend_codecs,
         margin_l,
         plot_bottom + 56.0,
+        chart.dict_styles,
     )?;
     area.present()?;
     drop(area);
@@ -1307,6 +1414,7 @@ fn draw_small(cfg: &Config, out_dir: &Path, decode: bool) -> Result<(), Box<dyn 
 
 fn draw_sweep_panel(
     cfg: &Config,
+    reference: Option<&CodecStyle>,
     area: &Area<'_>,
     metrics: &BTreeMap<(String, usize), f64>,
     codecs: &[&str],
@@ -1317,6 +1425,7 @@ fn draw_sweep_panel(
     plot_w: f64,
     panel: &SweepPanel,
     value_max: f64,
+    dict_styles: bool,
 ) -> Result<(), Box<dyn Error>> {
     let y_bot = panel_top + panel_h;
     let x_right = margin_l + plot_w;
@@ -1394,18 +1503,19 @@ fn draw_sweep_panel(
     }
     for codec in codecs {
         let base = sweep_base_codec(codec);
-        let Some(style) = cfg.style(base) else {
+        let Some(style) = chart_style(cfg, reference, base) else {
             continue;
         };
-        let dict = base != *codec;
+        let is_reference = reference.is_some_and(|r| r.key == *codec);
+        let solid = !is_reference && (!dict_styles || base != *codec);
         let mut points = Vec::new();
         for size in sizes {
             if let Some(value) = metrics.get(&((*codec).to_string(), *size)) {
                 points.push((x_pos(*size), y_pos(*value)));
             }
         }
-        polyline(area, &points, style.color, 2, 1.0, !dict)?;
-        if dict {
+        polyline(area, &points, style.color, 2, 1.0, !solid)?;
+        if solid {
             for (x, y) in points {
                 dot(area, x, y, 3, style.color)?;
             }
@@ -1787,22 +1897,35 @@ fn draw_segment_legend(area: &Area<'_>, mid_x: f64, y: f64) -> Result<(), Box<dy
 fn draw_sweep_legend(
     area: &Area<'_>,
     cfg: &Config,
+    reference: Option<&Reference>,
     data: &[BenchRow],
     codecs: &[&str],
     x: f64,
     y: f64,
+    dict_styles: bool,
 ) -> Result<(), Box<dyn Error>> {
-    let col_w = 175.0;
+    let reference_style = reference.map(Reference::style);
+    let label = |codec: &str| match reference {
+        Some(r) if r.codec == codec => r.label.to_string(),
+        _ => codec_label(sweep_label(codec), data, codec),
+    };
+    // About 5.5 px per character at size 10, plus the swatch and a gap.
+    let longest = codecs.iter().map(|c| label(c).len()).max().unwrap_or(0);
+    let col_w = (longest as f64 * 5.5 + 30.0).max(175.0);
     for (i, codec) in codecs.iter().enumerate() {
-        let Some(style) = cfg.style(codec) else {
+        let Some(style) = chart_style(cfg, reference_style.as_ref(), codec) else {
             continue;
         };
         let lx = x + (i % SWEEP_LEGEND_COLS) as f64 * col_w;
         let ly = y + (i / SWEEP_LEGEND_COLS) as f64 * LEGEND_ROW_H;
-        rect(area, lx, ly - 6.0, lx + 12.0, ly + 6.0, style.color)?;
+        if reference.is_some_and(|r| r.codec == *codec) {
+            dashed_line(area, (lx - 2.0, ly), (lx + 14.0, ly), style.color, 2)?;
+        } else {
+            rect(area, lx, ly - 6.0, lx + 12.0, ly + 6.0, style.color)?;
+        }
         text(
             area,
-            codec_label(sweep_label(codec), data, codec),
+            label(codec),
             px(lx + 18.0),
             px(ly),
             10,
@@ -1810,6 +1933,9 @@ fn draw_sweep_legend(
             HPos::Left,
             false,
         )?;
+    }
+    if !dict_styles {
+        return Ok(());
     }
     let style_y = y + codecs.len().div_ceil(SWEEP_LEGEND_COLS) as f64 * LEGEND_ROW_H + 4.0;
     line(area, x, style_y, x + 20.0, style_y, MUTED, 2)?;
@@ -1924,6 +2050,8 @@ fn sweep_label(codec: &str) -> &'static str {
         "lz4rip" => "lz4rip",
         "lz4_flex unsafe" => "lz4_flex (unsafe)",
         "lz4_flex" => "lz4_flex (safe)",
+        "C lz4 HC 2" => "lz4 HC level 2 (C, unsafe)",
+        "lz4rip ratio" => "lz4rip ratio",
         _ => "unknown",
     }
 }

@@ -5,8 +5,8 @@ use core::fmt;
 use alloc::vec::Vec;
 
 use crate::compress::{
-    CompressorRefN, DEFAULT_DICT_ENTRIES, DEFAULT_NODICT_ENTRIES, HashTableU32U16,
-    compress_dict_tables, get_maximum_output_size, init_dict,
+    CompressorRefN, DEFAULT_DICT_ENTRIES, DEFAULT_NODICT_ENTRIES, HashTableU32U16, RatioSmallTable,
+    RatioTable, compress_dict_tables, compress_ratio_tables, get_maximum_output_size, init_dict,
 };
 use lz4rip_core::CompressError;
 use lz4rip_core::{MINMATCH, WINDOW_SIZE};
@@ -153,6 +153,79 @@ impl<const N: usize> DictCompressorN<N> {
             main_base,
         } = self;
         compress_dict_tables(table, pristine, main_base, dict, input, output)
+    }
+
+    /// Compress `input` into a new `Vec<u8>`.
+    pub fn compress(&mut self, input: &[u8]) -> Vec<u8> {
+        let max = get_maximum_output_size(input.len());
+        let mut out = alloc::vec![0u8; max];
+        let n = self.compress_into(input, &mut out).unwrap();
+        out.truncate(n);
+        out
+    }
+}
+
+/// A reusable no-dict block compressor with the ratio profile.
+///
+/// Output equals [`compress_ratio_into`](crate::compress_ratio_into)'s:
+/// smaller than [`Compressor`]'s, at slower compression. It owns two tables
+/// (8 KB and 64 KB). Inputs up to 256 B reuse the small one across calls;
+/// larger inputs clear a table per call.
+///
+/// # Example
+/// ```
+/// use lz4rip_encode::{RatioCompressor, get_maximum_output_size};
+///
+/// let mut comp = RatioCompressor::new();
+/// let input = b"hello world, hello world, hello!";
+/// let mut output = vec![0u8; get_maximum_output_size(input.len())];
+/// let compressed_len = comp.compress_into(input, &mut output).unwrap();
+/// ```
+pub struct RatioCompressor {
+    small: RatioSmallTable,
+    /// Where the next small input's positions start in `small`.
+    small_offset: usize,
+    large: RatioTable,
+}
+
+impl fmt::Debug for RatioCompressor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RatioCompressor").finish_non_exhaustive()
+    }
+}
+
+impl Default for RatioCompressor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RatioCompressor {
+    /// Create a new compressor.
+    #[must_use]
+    pub fn new() -> Self {
+        RatioCompressor {
+            small: RatioSmallTable::new(),
+            small_offset: 1,
+            large: RatioTable::new(),
+        }
+    }
+
+    /// Compress `input` into `output`, returning the number of compressed bytes.
+    ///
+    /// `output` must be at least [`get_maximum_output_size`](crate::get_maximum_output_size)`(input.len())` bytes.
+    pub fn compress_into(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+    ) -> Result<usize, CompressError> {
+        compress_ratio_tables(
+            &mut self.small,
+            &mut self.small_offset,
+            &mut self.large,
+            input,
+            output,
+        )
     }
 
     /// Compress `input` into a new `Vec<u8>`.

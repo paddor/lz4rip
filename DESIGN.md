@@ -28,8 +28,10 @@ compile-time entry count `N`:
 
 | Table | Value | Bytes | Default `N` | Used by |
 |---|---|---|---|---|
-| `HashTableU32U16<N>` | `u16` | `2 * N` | 4096 (8 KB) | dict path, dict + input < 64 KB |
+| `HashTableU32U16<N, H4>` | `u16` | `2 * N` | 4096 (8 KB) | dict path, dict + input < 64 KB |
 | `HashTableU32<N>` | `u32` | `4 * N` | 2048 (8 KB) | no-dict path; dict path, dict + input >= 64 KB |
+
+`H4` (4-byte hash) is only for the [ratio profile](#ratio-profile).
 
 Value width decides correctness: `u16` positions fit only the dict path's
 64 KB bound, and no-dict epoch reuse moves the stream offset past 64 KB. `N`
@@ -77,16 +79,21 @@ depend on pointer width or endianness.
 ## Compile-time specialization
 
 Two `#[inline(never)]` hot loops in `crates/encode/src/compress.rs`.
-`compress_internal` runs the single-table paths, generic over:
+`compress_core` runs the single-table paths, generic over:
 
 | Parameter | Effect |
 |---|---|
-| `T: HashTable` | value width and entry count |
+| `T: HashTable` | value width, entry count and hash |
 | `USE_DICT` | dictionary lookups (dropped when false) |
 | `HAS_OFFSET` | offset arithmetic for dict positions (zero when false) |
 | `READONLY` | probe the pristine dict table without writing it (inputs ≤ 128 B) |
 | `NEAR` | dict and input fit one 64 KiB window: no distance test |
+| `SKIP` | skip shift: 3, or 6 for the ratio profile |
+| `FILL` | index match starts and ends (ratio profile) |
 | `S: Sink` | output sink |
+
+`compress_internal` calls it with the default `SKIP` and no `FILL`, so the
+default paths compile as they did before the ratio profile.
 
 `compress_with_dict_table` runs the dual-table dict path, generic over `T` and
 `S`. It probes the main table first, then the pristine table.
@@ -221,6 +228,105 @@ Dict and no-dict are separate types (`DictCompressorRef` vs `CompressorRef`,
 carries one table. Dicts over 64 KB (`WINDOW_SIZE`) are trimmed to their last
 64 KB. Dicts under 4 bytes (`MINMATCH`) are ignored.
 
+## Ratio profile
+
+`compress_ratio_into`, `compress_ratio`, `RatioCompressor` and
+`FrameEncoder::ratio_profile` trade compression speed for smaller output.
+They are for formats that must stay LZ4, such as fixed wire formats. Where
+the format is free, zstd compresses better. They run the same loop as the
+default (`compress_core`) with other const parameters:
+
+| Input (with dict) | Table | Hash | `SKIP` | `FILL` |
+|---|---|---|---:|---|
+| up to 4 KiB | 4K x `u16` (8 KB) | 4 bytes | 6 | no |
+| 4-64 KiB | 16K x `u16` (32 KB) | 5 bytes | 6 | yes |
+| from 64 KiB, frames | 16K x `u32` (64 KB) | 5 bytes | 6 | yes |
+
+`RatioCompressor` keeps one `u32` table for both larger rows, with the same
+output. Up to 256 B (`RATIO_EPOCH_THRESHOLD`) it reuses its small table
+across calls instead of clearing 8 KB each time: each call stores positions
+above the last call's, so older entries fail the `input_pos < next_cur`
+test, and the table is cleared only when `u16` positions would wrap. The
+one-shot functions store positions from 1 in a fresh table, so both write the
+same output. On 4 MiB of Silesia in chunks, reuse made `RatioCompressor` 2x
+as fast at 64 B and 10% faster at 256 B. Reuse runs a slower loop (stream
+offset): it broke even at 512 B and was 12% slower at 1 KiB and 25% slower
+at 4 KiB. Up to 4 KiB these are C lz4's settings. `FILL` indexes two
+positions after each match start and two before its end, as C lz4's MID mode
+does (see [below](#c-lz4s-hc-levels-and-mid)). The search stays single pass,
+one probe per position.
+
+Measured on x86_64 (i7-8700B, one core, best of 3 to 5), each chunk
+compressed alone. Output % / compression MB/s:
+
+| | Silesia 512 KiB | Markdown 512 KiB | Rust 512 KiB | mixed 4 KiB | mixed 8 KiB | mixed 64 KiB |
+|---|---:|---:|---:|---:|---:|---:|
+| default | 51.6 / 580 | 48.9 / 454 | 35.5 / 524 | 64.5 / 602 | 59.5 / 563 | 52.9 / 530 |
+| lz4_flex 0.14.2 | 47.9 / 508 | 44.1 / 417 | 33.6 / 512 | 60.4 / 455 | 56.5 / 448 | 49.1 / 492 |
+| C lz4 1.10, accel 1 | 47.8 / 509 | 44.1 / 429 | 33.5 / 516 | 60.1 / 468 | 56.2 / 461 | 48.6 / 450 |
+| ratio profile | 44.5 / 377 | 40.5 / 321 | 32.2 / 434 | 60.3 / 448 | 56.3 / 489 | 46.9 / 422 |
+| C LZ4-MID (HC level 2) | 42.3 / 234 | 38.2 / 224 | 29.9 / 313 | 58.3 / 255 | 53.9 / 230 | 44.6 / 209 |
+
+Markdown and Rust are 16 MiB each of README/CHANGELOG files and source
+files from crates.io crates. Mixed is 4 MiB from the start of samba,
+dickens, xml and mozilla, plus the Markdown set.
+
+Ratio output decodes 4-12% slower than default output from 8 KiB and 15-22%
+slower at 1-4 KiB (more matches, and 4-byte ones). That is within 7% of C
+lz4's output.
+
+Tried and dropped (512 KiB chunks unless noted):
+
+- 4-byte hash above 4 KiB: larger output, compression 13% slower, decoding
+  17-20% slower (more 4-byte matches).
+- 32K and 64K entries: 0.2-0.6 pp smaller output per doubling, 5-11% slower
+  each.
+- One-step lazy matching (try `cur + 1`, keep the longer match): the gain and
+  cost of one table doubling.
+- Skip shift 4 or 5: 0.1-0.3 pp larger output for 1-4% speed. At 8 KiB, 4
+  gave 0.7 pp larger output.
+- The 16K table from 4 KiB down: at 4 KiB, 0.4 pp larger output than C lz4's
+  settings, and slower. At 8 KiB it wins both.
+- `FILL` skipping end positions inside short matches: 7% slower, from
+  branches on the match length.
+
+### C lz4's HC levels and MID
+
+C lz4's HC API (`LZ4_compress_HC`) maps its level to one of three searches
+(lz4 1.10, `k_clTable` in `lz4hc.c`; the header documents only the range):
+
+| Level | Search | Per position |
+|---|---|---|
+| 1-2 | MID | one probe in each of two tables |
+| 3-9 | hash chain | up to 4, 8, 16 ... 256 earlier positions |
+| 10-12 | optimal parser | up to 96, 512, 16384 candidates, then sequences picked by cost |
+
+Levels below 1 mean 9. MID came with lz4 1.10 (2024). Before, levels 1-2
+ran a two-try hash chain and the lowest real HC level was 3. 1.10 lowered
+`LZ4HC_CLEVEL_MIN` to 2, so `lz4 -2` and frame level 2 run MID. Level 1
+has the same parameters.
+
+MID (`LZ4MID_compress`) is a single pass:
+
+- Two 16K-entry `u32` tables (128 KB), one keyed by a hash of 7 bytes (long
+  matches), one by a hash of 4 bytes. Each position probes the long table
+  first, then the short one.
+- On a short match it also probes the long table at `ip + 1` and keeps the
+  longer match.
+- After each match it indexes positions 1 and 2 after the start (long
+  table) and 1 (short), and 5, 3 and 2 before the end (long) and 2 and 1
+  (short).
+- On misses the step grows by 1 per 512 bytes since the last match. Fast
+  mode and the ratio profile grow it every 64 misses, which is why MID is
+  slow on incompressible input.
+
+The ratio charts and the table above compare against level 2 because it is
+MID: the fastest HC level, and the same kind of search as the ratio profile
+(single pass, no chains, match ends indexed). Faster than level 2 means
+faster than every HC level. Levels 3 and up compress smaller and slower.
+The ratio profile differs in one table with a 5-byte hash (64 KB, 8 KB up
+to 4 KiB of input), no `ip + 1` probe, and the fast-mode skip.
+
 ## Crate split
 
 Four crates: `lz4rip` (facade: re-exports, frame format), `lz4rip-core`
@@ -234,8 +340,9 @@ Dead code in one path can no longer shift register allocation in the other
 ## Scope
 
 LZ4-HC, LZ4-OPT, and LZ4-MID (higher ratio, lower throughput) are permanently
-out of scope. Use zstd ([zrip](https://github.com/paddor/zrip)) when ratio
-matters.
+out of scope. The [ratio profile](#ratio-profile) stays a single-pass search
+with one table. Use zstd ([zrip](https://github.com/paddor/zrip)) when ratio
+matters and the format is free.
 
 lz4rip implements the LZ4 block format and, behind the `frame` feature, the
 LZ4 frame format (streaming). The block format is the performance-critical

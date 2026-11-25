@@ -130,6 +130,13 @@ fn hash_n<const N: usize>(bytes: u64) -> usize {
     ((bytes.to_le() << 24).wrapping_mul(PRIME5) >> (64 - N.ilog2())) as usize
 }
 
+/// Hash of the first four bytes in memory of `bytes` onto `N` buckets, as C
+/// lz4 hashes inputs below 64 KiB (`LZ4_hash4`).
+#[inline(always)]
+fn hash4_n<const N: usize>(bytes: u64) -> usize {
+    (u32::from_le(first4(bytes)).wrapping_mul(2_654_435_761) >> (32 - N.ilog2())) as usize
+}
+
 /// Default entry count for the no-dict (`u32`-valued) table: 2048 x 4 B = 8 KB.
 pub const DEFAULT_NODICT_ENTRIES: usize = 2 * 1024;
 /// Default entry count for the dict (`u16`-valued) tables: 4096 x 2 B = 8 KB.
@@ -160,16 +167,16 @@ const fn assert_valid_entries(n: usize) {
 ///
 /// `N` must be a power of two (checked at compile time in [`new`](Self::new)).
 /// Stored positions must fit in `u16`, so this is used only when dict + input
-/// stays below 64 KB.
+/// stays below 64 KB. `H4` hashes 4 bytes instead of 5.
 #[derive(Debug)]
 #[repr(align(64))]
-pub(crate) struct HashTableU32U16<const N: usize = DEFAULT_DICT_ENTRIES> {
+pub(crate) struct HashTableU32U16<const N: usize = DEFAULT_DICT_ENTRIES, const H4: bool = false> {
     #[cfg(feature = "alloc")]
     dict: Box<[u16; N]>,
     #[cfg(not(feature = "alloc"))]
     dict: [u16; N],
 }
-impl<const N: usize> HashTableU32U16<N> {
+impl<const N: usize, const H4: bool> HashTableU32U16<N, H4> {
     #[cfg(feature = "alloc")]
     #[inline]
     pub(crate) fn new() -> Self {
@@ -184,7 +191,7 @@ impl<const N: usize> HashTableU32U16<N> {
         Self { dict: [0u16; N] }
     }
 }
-impl<const N: usize> HashTable for HashTableU32U16<N> {
+impl<const N: usize, const H4: bool> HashTable for HashTableU32U16<N, H4> {
     #[inline]
     fn get_at(&self, idx: usize) -> usize {
         self.dict[idx] as usize
@@ -199,7 +206,11 @@ impl<const N: usize> HashTable for HashTableU32U16<N> {
     }
     #[inline]
     fn hash(bytes: u64) -> usize {
-        hash_n::<N>(bytes)
+        if H4 {
+            hash4_n::<N>(bytes)
+        } else {
+            hash_n::<N>(bytes)
+        }
     }
 }
 

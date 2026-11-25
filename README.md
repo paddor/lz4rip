@@ -25,6 +25,11 @@ non-matching data more aggressively than C lz4 and lz4_flex, which costs about
 9% ratio on compressible data (2.18x vs 2.39x) but makes compression faster,
 especially on incompressible input where the skip acceleration dominates.
 
+If the format must stay LZ4 and ratio matters, use the [ratio
+profile](#ratio-profile). On 512 KiB Silesia chunks its output is 7% smaller
+than C lz4's, at 74% of its compression speed, and it compresses 1.6x as fast
+as C lz4's HC level 2.
+
 On Intel Skylake-family CPUs (Skylake through Comet Lake), build with the JCC
 erratum mitigation:
 
@@ -225,6 +230,46 @@ let dict = trainer.train();
 // Use with DictCompressor::new(&dict) / Decompressor::with_dict(&dict)
 ```
 
+### Ratio profile
+
+`compress_ratio`, `compress_ratio_into` and `RatioCompressor` compress to
+smaller output, more slowly, for formats that must stay LZ4. Requires the
+`alloc` feature. Decoding does not change.
+
+```rust
+use lz4rip::block::{RatioCompressor, compress_ratio, decompress};
+
+let input = b"hello world, hello world, hello world!";
+let compressed = compress_ratio(input);
+assert_eq!(decompress(&compressed, input.len()).unwrap(), input);
+
+// Reuses its tables across calls; same output as `compress_ratio`.
+let mut comp = RatioCompressor::new();
+assert_eq!(comp.compress(input), compressed);
+```
+
+Up to 4 KiB of input it uses C lz4's settings and matches its ratio. Larger
+inputs use a 16K-entry table (64 KB) and also index the ends of each match
+(x86_64, chunks compressed alone):
+
+| | Silesia 512 KiB | Markdown 512 KiB | mixed 64 KiB |
+|---|---:|---:|---:|
+| lz4rip | 51.6% / 580 MB/s | 48.9% / 454 MB/s | 52.9% / 530 MB/s |
+| lz4rip ratio profile | 44.5% / 377 MB/s | 40.5% / 321 MB/s | 46.9% / 422 MB/s |
+| C lz4 | 47.8% / 509 MB/s | 44.1% / 429 MB/s | 48.6% / 450 MB/s |
+| lz4_flex | 47.9% / 508 MB/s | 44.1% / 417 MB/s | 49.1% / 492 MB/s |
+| C lz4 HC level 2 | 42.3% / 234 MB/s | 38.2% / 224 MB/s | 44.6% / 209 MB/s |
+
+See [DESIGN.md](DESIGN.md#ratio-profile) for the settings and the corpora.
+
+C lz4's HC level 2 ([MID](DESIGN.md#c-lz4s-hc-levels-and-mid), its fastest HC
+level) writes 5-6% smaller output, but the ratio profile compresses 1.4-2x
+as fast. On Silesia slices from 64 B to 1 MiB, with reused state, it
+compresses 1.4-2.5x as fast as HC level 2 on compressible data and 1.9-6.3x
+on incompressible data. Gray is lz4rip's default mode, for reference:
+
+![LZ4 Ratio Modes Sweep](https://raw.githubusercontent.com/paddor/lz4rip/main/doc/charts/x86_64/ratio_sweep.svg)
+
 ## Frame format
 
 The frame format (feature `frame`, on by default) wraps block compression in the
@@ -263,6 +308,9 @@ encoder
     .unwrap();
 let compressed = encoder.finish().unwrap();
 ```
+
+`FrameEncoder::ratio_profile()` compresses frame blocks with the [ratio
+profile](#ratio-profile).
 
 Linked blocks also work with frame dictionaries:
 
