@@ -37,8 +37,7 @@ fuzz_target!(|input: Input| {
 
     // Compress with dict (Independent block mode, default block size).
     let mut enc =
-        FrameEncoder::with_dictionary(Vec::with_capacity(data.len()), dict, dict_id, None)
-            .unwrap();
+        FrameEncoder::with_dictionary(Vec::with_capacity(data.len()), dict, dict_id, None).unwrap();
     for chunk in data.chunks(chunk_size) {
         enc.write_all(chunk).unwrap();
     }
@@ -49,6 +48,20 @@ fuzz_target!(|input: Input| {
     let mut decompressed = Vec::new();
     dec.read_to_end(&mut decompressed).unwrap();
     assert_eq!(data, decompressed);
+
+    // Ratio profile, linked blocks: must round-trip.
+    let info = lz4rip::frame::FrameInfo::new().block_mode(lz4rip::frame::BlockMode::Linked);
+    let mut enc = FrameEncoder::with_dictionary(Vec::new(), dict, dict_id, Some(info))
+        .unwrap()
+        .ratio_profile();
+    for chunk in data.chunks(chunk_size) {
+        enc.write_all(chunk).unwrap();
+    }
+    let ratio = enc.finish().unwrap();
+    let mut dec = FrameDecoder::with_dictionary(&*ratio, dict, dict_id);
+    let mut out = Vec::new();
+    dec.read_to_end(&mut out).unwrap();
+    assert_eq!(data, out);
 
     // Decompress with wrong dict: must not panic.
     let wrong_dict: Vec<u8> = dict.iter().map(|b| b.wrapping_add(1)).collect();

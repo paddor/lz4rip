@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Added
+
+- Ratio profile: `block::compress_ratio`, `block::compress_ratio_into`,
+  `block::RatioCompressor` and `frame::FrameEncoder::ratio_profile` compress
+  to smaller output, more slowly, for formats that must stay LZ4. Up to
+  4 KiB of input they use C lz4's settings and match its ratio. Larger
+  inputs use a 16K-entry table (64 KB) and also index the ends of each
+  match. On 512 KiB Silesia chunks (x86_64), output is 14% smaller than the
+  default's and 7% smaller than C lz4's and lz4_flex's. Compression runs at
+  377 MB/s, vs 580 for the default and 509 for C lz4. Needs `alloc`.
+  Decoding and default compression do not change.
+- `lz4rip_bench --ratio` measures the ratio profile against C lz4's HC level
+  2 (MID) on Silesia slices, with reused state. The new chart
+  `ratio_sweep.svg` shows it compressing 1.4-2.5x as fast as HC level 2 on
+  compressible slices and 1.9-6.3x on incompressible ones, with lz4rip's
+  default mode as a gray reference.
+
 ## [0.12.5] - 2026-11-22
 
 The fix is in `lz4rip-decode` 0.11.2, which this release requires.

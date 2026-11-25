@@ -49,6 +49,7 @@ taskset -c 0 cargo run --release --example lz4rip_bench -- --structured
 taskset -c 0 cargo run --release --example lz4rip_bench -- --structured-dict
 taskset -c 0 cargo run --release --example lz4rip_bench -- --sweep
 taskset -c 0 cargo run --release --example lz4rip_bench -- --small
+taskset -c 0 cargo run --release --example lz4rip_bench -- --ratio
 cargo run --manifest-path bench/Cargo.toml --bin lz4rip_charts -- all doc/charts/x86_64
 ```
 
@@ -63,6 +64,13 @@ decodes its own output. `--small` rows hold pass totals.
 `--small` benchmarks slices (512 B to 1 MiB) of four Silesia files and writes
 `small_encode.svg` and `small_decode.svg`. Every implementation decodes C
 lz4's blocks (thick lines) and its own output (thin lines).
+
+`--ratio` benchmarks the ratio profile (`RatioCompressor`) against C lz4's
+HC level 2 (MID), both with reused state, on the `--sweep` slice sizes
+(cache `ratio/sweep/`). Each codec decodes its own output. Its chart is
+`ratio_sweep.svg`, which draws lz4rip's default mode in faint gray as a
+reference, from the `--sweep` cache. `lz4rip_charts ratio` draws only that
+chart.
 
 Rerun only lz4rip (other impls served from cache), then regenerate charts:
 ```sh

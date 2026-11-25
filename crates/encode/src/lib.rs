@@ -23,21 +23,26 @@ mod compressor;
 mod dict;
 pub(crate) mod hashtable;
 
-#[cfg(feature = "alloc")]
-pub use compress::compress;
 pub use compress::{
     CompressorRef, CompressorRefN, DEFAULT_DICT_ENTRIES, DEFAULT_NODICT_ENTRIES, DictCompressorRef,
     DictCompressorRefN, MIN_ENTRIES, compress_into, compress_into_with_dict,
     get_maximum_output_size,
 };
 #[cfg(feature = "alloc")]
-pub use compressor::{Compressor, CompressorN, DictCompressor, DictCompressorN};
+pub use compress::{compress, compress_ratio, compress_ratio_into};
+#[cfg(feature = "alloc")]
+pub use compressor::{Compressor, CompressorN, DictCompressor, DictCompressorN, RatioCompressor};
 #[cfg(feature = "alloc")]
 pub use dict::DictTrainer;
 pub use lz4rip_core::CompressError;
 
 // Cross-crate plumbing for the lz4rip facade (frame module + tests).
 // Public for workspace access but not part of the stable API.
+#[doc(hidden)]
+pub use compress::RatioTable;
+#[cfg(feature = "alloc")]
+#[doc(hidden)]
+pub use compress::compress_ratio_into_sink_with_dict;
 #[doc(hidden)]
 pub use compress::{compress_into_sink_with_dict, seed_table_with_input, write_integer};
 #[doc(hidden)]
@@ -64,6 +69,31 @@ pub fn compress_into_sink_with_table<
     input_stream_offset: usize,
 ) -> Result<usize, lz4rip_core::CompressError> {
     compress::compress_into_sink_with_table_inner::<USE_DICT, HAS_OFFSET, READONLY, _>(
+        input,
+        input_pos,
+        output,
+        table,
+        ext_dict,
+        input_stream_offset,
+    )
+}
+
+/// [`compress_into_sink_with_table`] with the ratio profile and a
+/// [`RatioTable`].
+#[doc(hidden)]
+pub fn compress_ratio_into_sink_with_table<
+    const USE_DICT: bool,
+    const HAS_OFFSET: bool,
+    S: lz4rip_core::Sink,
+>(
+    input: &[u8],
+    input_pos: usize,
+    output: &mut S,
+    table: &mut RatioTable,
+    ext_dict: &[u8],
+    input_stream_offset: usize,
+) -> Result<usize, lz4rip_core::CompressError> {
+    compress::compress_ratio_into_sink_with_table_inner::<USE_DICT, HAS_OFFSET, _>(
         input,
         input_pos,
         output,

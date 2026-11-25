@@ -43,6 +43,37 @@ const INCREASE_STEPSIZE_BITSHIFT: usize = 3;
 /// Larger inputs search both tables to retain those matches.
 const DICT_READONLY_LIMIT: usize = 128;
 
+/// Ratio profile: inputs (with dict) up to this size use C lz4's settings, a
+/// 4K-entry table with a 4-byte hash. Larger inputs use `RATIO_ENTRIES` and
+/// index match ends too (`FILL`). At 4 KiB the small table gave slightly
+/// smaller output, faster; at 8 KiB the large one did.
+#[cfg(feature = "alloc")]
+const RATIO_SMALL_LIMIT: usize = 4 * 1024;
+
+/// Ratio profile table entries above `RATIO_SMALL_LIMIT` (64 KB as `u32`).
+/// Bigger tables gained about 1% output per doubling at 512 KiB and cost
+/// about 9% speed.
+pub(crate) const RATIO_ENTRIES: usize = 16 * 1024;
+
+/// Ratio profile skip shift, as C lz4.
+const RATIO_SKIP: usize = 6;
+
+/// Ratio profile: no-dict inputs up to this size reuse
+/// [`RatioCompressor`](crate::RatioCompressor)'s small table across calls
+/// instead of clearing it (epoch reuse). That made 64 B twice as fast and
+/// 256 B 10% faster. The offset loop is slower: at 512 B reuse broke even,
+/// at 1 KiB it was 12% slower and at 4 KiB 25% slower than clearing.
+#[cfg(feature = "alloc")]
+const RATIO_EPOCH_THRESHOLD: usize = 256;
+
+/// Ratio profile table up to `RATIO_SMALL_LIMIT`.
+#[cfg(feature = "alloc")]
+pub(crate) type RatioSmallTable = HashTableU32U16<4096, true>;
+
+/// Ratio profile table above `RATIO_SMALL_LIMIT`. Frames and inputs from
+/// 64 KiB need its `u32` positions.
+pub type RatioTable = HashTableU32<RATIO_ENTRIES>;
+
 /// Dict inputs up to this size reuse the main table across calls (epoch
 /// reuse) instead of clearing it. Above it, reuse gained nothing on a stream
 /// of different messages and made repeated 8 KB text 20-30% slower.
@@ -188,13 +219,43 @@ fn backtrack_match(
 ///
 /// `NEAR`: dict and input fit in one window, so every candidate from this
 /// stream is within `MAX_DISTANCE` and needs no distance test.
-#[inline(never)]
+#[inline(always)]
 pub(crate) fn compress_internal<
     T: HashTable,
     const USE_DICT: bool,
     const HAS_OFFSET: bool,
     const READONLY: bool,
     const NEAR: bool,
+    S: Sink,
+>(
+    input: &[u8],
+    input_pos: usize,
+    output: &mut S,
+    table: &mut T,
+    ext_dict: &[u8],
+    input_stream_offset: usize,
+) -> Result<usize, CompressError> {
+    compress_core::<T, USE_DICT, HAS_OFFSET, READONLY, NEAR, INCREASE_STEPSIZE_BITSHIFT, false, S>(
+        input,
+        input_pos,
+        output,
+        table,
+        ext_dict,
+        input_stream_offset,
+    )
+}
+
+/// [`compress_internal`] with skip shift `SKIP`. `FILL` also indexes
+/// positions at the start and end of each match (ratio profile).
+#[inline(never)]
+pub(crate) fn compress_core<
+    T: HashTable,
+    const USE_DICT: bool,
+    const HAS_OFFSET: bool,
+    const READONLY: bool,
+    const NEAR: bool,
+    const SKIP: usize,
+    const FILL: bool,
     S: Sink,
 >(
     input: &[u8],
@@ -283,10 +344,10 @@ pub(crate) fn compress_internal<
         let mut candidate;
         let mut candidate_source;
         let mut offset;
-        let mut non_match_count = 1 << INCREASE_STEPSIZE_BITSHIFT;
+        let mut non_match_count = 1 << SKIP;
 
         loop {
-            let step = non_match_count >> INCREASE_STEPSIZE_BITSHIFT;
+            let step = non_match_count >> SKIP;
             non_match_count += 1;
             let next_cur = cur + step;
 
@@ -386,11 +447,34 @@ pub(crate) fn compress_internal<
             );
 
             let lit_len = cur - literal_start;
+            let match_start = cur;
 
             cur += MINMATCH;
             candidate += MINMATCH;
             let duplicate_length =
                 count_same_bytes(input, &mut cur, candidate_source, candidate, END_OFFSET);
+
+            if FILL && !READONLY {
+                // Index two positions after the match start and two before
+                // its end, as C lz4's MID mode does, so later matches can
+                // start inside this one. `cur <= input.len() - END_OFFSET`, so
+                // `p <= lim` fails only for a wrapped `cur - 5` (a 4-byte
+                // match at the start of a linked block). The test also drops
+                // the reads' bounds checks. Skipping end positions inside
+                // short matches instead measured 7% slower (branches on the
+                // match length).
+                let lim = input.len() - 8;
+                for p in [
+                    match_start + 1,
+                    match_start + 2,
+                    cur.wrapping_sub(5),
+                    cur - 3,
+                ] {
+                    if p <= lim {
+                        table.put_at(T::hash(rd64(input, p)), p + input_stream_offset);
+                    }
+                }
+            }
 
             let hash = T::hash(rd64_upto(input, cur - 2, input.len() - 8));
             if !READONLY {
@@ -467,10 +551,14 @@ pub(crate) fn compress_into_sink_with_table_inner<
 /// linked frames compress the first block with the normal dictionary path, then
 /// seed the reusable linked-block table from that decoded block so later blocks
 /// can reference it.
-pub fn seed_table_with_input(table: &mut HashTableU32, input: &[u8], input_stream_offset: usize) {
+pub fn seed_table_with_input<const N: usize>(
+    table: &mut HashTableU32<N>,
+    input: &[u8],
+    input_stream_offset: usize,
+) {
     let mut i = 0usize;
     while i + 8 <= input.len() {
-        let hash = <HashTableU32 as HashTable>::get_hash_at(input, i);
+        let hash = <HashTableU32<N> as HashTable>::get_hash_at(input, i);
         table.put_at(hash, i + input_stream_offset);
         i += 3;
     }
@@ -699,6 +787,147 @@ pub fn compress_into_sink_with_dict<const USE_DICT: bool>(
     }
 }
 
+/// [`compress_into_sink_with_dict`] with the ratio profile.
+#[cfg(feature = "alloc")]
+pub fn compress_ratio_into_sink_with_dict<const USE_DICT: bool>(
+    input: &[u8],
+    output: &mut impl Sink,
+    mut dict_data: &[u8],
+) -> Result<usize, CompressError> {
+    if USE_DICT && dict_data.len() < MINMATCH {
+        return compress_ratio_into_sink_with_dict::<false>(input, output, b"");
+    }
+    if dict_data.len() > WINDOW_SIZE {
+        dict_data = &dict_data[dict_data.len() - WINDOW_SIZE..];
+    }
+    let span = dict_data.len() + input.len();
+    if span <= RATIO_SMALL_LIMIT {
+        let mut table = RatioSmallTable::new();
+        if !USE_DICT && input.len() <= RATIO_EPOCH_THRESHOLD {
+            // The loop `RatioCompressor` runs, for the same output.
+            return compress_ratio_epoch(&mut table, 1, input, output);
+        }
+        init_dict(&mut table, &mut dict_data);
+        compress_core::<_, USE_DICT, USE_DICT, false, true, RATIO_SKIP, false, _>(
+            input,
+            0,
+            output,
+            &mut table,
+            dict_data,
+            dict_data.len(),
+        )
+    } else if span < u16::MAX as usize {
+        let mut table = HashTableU32U16::<RATIO_ENTRIES>::new();
+        init_dict(&mut table, &mut dict_data);
+        compress_core::<_, USE_DICT, USE_DICT, false, true, RATIO_SKIP, true, _>(
+            input,
+            0,
+            output,
+            &mut table,
+            dict_data,
+            dict_data.len(),
+        )
+    } else {
+        let mut table = RatioTable::new();
+        init_dict(&mut table, &mut dict_data);
+        compress_core::<_, USE_DICT, USE_DICT, false, false, RATIO_SKIP, true, _>(
+            input,
+            0,
+            output,
+            &mut table,
+            dict_data,
+            dict_data.len(),
+        )
+    }
+}
+
+/// Compress with the ratio profile and a caller-owned [`RatioTable`].
+///
+/// Cross-crate plumbing for the frame encoder, as
+/// `compress_into_sink_with_table_inner`.
+pub(crate) fn compress_ratio_into_sink_with_table_inner<
+    const USE_DICT: bool,
+    const HAS_OFFSET: bool,
+    S: Sink,
+>(
+    input: &[u8],
+    input_pos: usize,
+    output: &mut S,
+    table: &mut RatioTable,
+    ext_dict: &[u8],
+    input_stream_offset: usize,
+) -> Result<usize, CompressError> {
+    compress_core::<_, USE_DICT, HAS_OFFSET, false, false, RATIO_SKIP, true, _>(
+        input,
+        input_pos,
+        output,
+        table,
+        ext_dict,
+        input_stream_offset,
+    )
+}
+
+/// Ratio profile without a dict up to `RATIO_EPOCH_THRESHOLD`. Positions go
+/// into `table` at `offset` (at least 1), so entries below it, from a fresh
+/// table or earlier calls, fail the `input_pos < next_cur` test. A reused
+/// table gives the same output as a fresh one.
+#[cfg(feature = "alloc")]
+fn compress_ratio_epoch<S: Sink>(
+    table: &mut RatioSmallTable,
+    offset: usize,
+    input: &[u8],
+    output: &mut S,
+) -> Result<usize, CompressError> {
+    debug_assert!(offset >= 1 && offset + input.len() <= u16::MAX as usize);
+    compress_core::<_, false, true, false, true, RATIO_SKIP, false, _>(
+        input, 0, output, table, b"", offset,
+    )
+}
+
+/// Compress `input` with the ratio profile using caller-owned tables.
+/// Shared by [`RatioCompressor`](crate::RatioCompressor); output equals
+/// [`compress_ratio_into`]. `small_offset` is where the next small input's
+/// positions start in `small`.
+#[cfg(feature = "alloc")]
+pub(crate) fn compress_ratio_tables(
+    small: &mut RatioSmallTable,
+    small_offset: &mut usize,
+    large: &mut RatioTable,
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<usize, CompressError> {
+    let mut sink = SliceSink::new(output, 0);
+    if input.len() <= RATIO_EPOCH_THRESHOLD {
+        // Reuse `small` instead of clearing it (8 KB) per call. Each call
+        // stores its positions above the last call's. Clear only when `u16`
+        // positions would wrap.
+        if *small_offset + input.len() > u16::MAX as usize {
+            small.clear();
+            *small_offset = 1;
+        }
+        let offset = *small_offset;
+        *small_offset += input.len();
+        compress_ratio_epoch(small, offset, input, &mut sink)
+    } else if input.len() <= RATIO_SMALL_LIMIT {
+        small.clear();
+        // Positions from 0 to `input.len()` are in `small` now.
+        *small_offset = input.len();
+        compress_core::<_, false, false, false, true, RATIO_SKIP, false, _>(
+            input, 0, &mut sink, small, b"", 0,
+        )
+    } else if input.len() < u16::MAX as usize {
+        large.clear();
+        compress_core::<_, false, false, false, true, RATIO_SKIP, true, _>(
+            input, 0, &mut sink, large, b"", 0,
+        )
+    } else {
+        large.clear();
+        compress_core::<_, false, false, false, false, RATIO_SKIP, true, _>(
+            input, 0, &mut sink, large, b"", 0,
+        )
+    }
+}
+
 #[inline]
 pub(crate) fn init_dict<T: HashTable>(dict: &mut T, dict_data: &mut &[u8]) {
     if dict_data.len() > WINDOW_SIZE {
@@ -761,6 +990,38 @@ pub fn compress(input: &[u8]) -> Vec<u8> {
             .unwrap();
     compressed.truncate(compressed_len);
 
+    compressed
+}
+
+/// Compress all bytes of `input` into `output` with the ratio profile.
+///
+/// Output is smaller than [`compress_into`]'s, and compression slower. Up
+/// to 4 KiB of input the encoder uses C lz4's settings (4K-entry table,
+/// 4-byte hash), with C lz4's ratio. Larger inputs use a 16K-entry table
+/// and also index the ends of each match. On 512 KiB chunks of the Silesia
+/// corpus, output is 14% smaller than [`compress_into`]'s and 7% smaller
+/// than C lz4's, and compression takes 1.5x as long. Decoding is
+/// unchanged.
+///
+/// The tables take up to 64 KB, so this needs `alloc`. To reuse them, use
+/// [`RatioCompressor`](crate::RatioCompressor).
+///
+/// `output` must be at least [`get_maximum_output_size`]`(input.len())`
+/// bytes. Returns the number of bytes written.
+#[cfg(feature = "alloc")]
+#[inline]
+pub fn compress_ratio_into(input: &[u8], output: &mut [u8]) -> Result<usize, CompressError> {
+    compress_ratio_into_sink_with_dict::<false>(input, &mut SliceSink::new(output, 0), b"")
+}
+
+/// Compress all bytes of `input` with the ratio profile. See
+/// [`compress_ratio_into`].
+#[must_use]
+#[cfg(feature = "alloc")]
+pub fn compress_ratio(input: &[u8]) -> Vec<u8> {
+    let mut compressed = vec![0u8; get_maximum_output_size(input.len())];
+    let len = compress_ratio_into(input, &mut compressed).unwrap();
+    compressed.truncate(len);
     compressed
 }
 

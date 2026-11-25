@@ -102,7 +102,8 @@ pub mod block {
     pub use lz4rip_decode::{Decompressor, decompress, decompress_append};
     #[cfg(feature = "alloc")]
     pub use lz4rip_encode::{
-        Compressor, CompressorN, DictCompressor, DictCompressorN, DictTrainer, compress,
+        Compressor, CompressorN, DictCompressor, DictCompressorN, DictTrainer, RatioCompressor,
+        compress, compress_ratio, compress_ratio_into,
     };
 }
 
@@ -111,7 +112,7 @@ pub mod block {
 pub mod frame;
 
 #[cfg(feature = "alloc")]
-pub use block::{compress, decompress, decompress_append};
+pub use block::{compress, compress_ratio, compress_ratio_into, decompress, decompress_append};
 pub use block::{
     compress_into, compress_into_with_dict, decompress_into, decompress_into_with_dict,
     get_maximum_output_size, validate_block, validate_block_with_dict,
