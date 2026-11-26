@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.12.7] - 2026-11-26
+
+The changes are in `lz4rip-encode` 0.10.17, which this release requires.
+
 ### Changed
 
 - `block::RatioCompressor` makes its 64 KB table on its first input above
