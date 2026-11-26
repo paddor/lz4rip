@@ -30,13 +30,22 @@ fn vec_sink_for_compression(
     SliceSink::new(&mut vec[offset..], pos)
 }
 
-/// The encoder's hash table: default or ratio profile.
+/// The encoder's hash table for blocks that need one (see `write_block`):
+/// default or ratio profile.
 enum CompressionTable {
     Fast(HashTableU32),
     Ratio(RatioTable),
 }
 
 impl CompressionTable {
+    fn new(ratio: bool) -> Self {
+        if ratio {
+            Self::Ratio(RatioTable::new())
+        } else {
+            Self::Fast(HashTableU32::new())
+        }
+    }
+
     fn clear(&mut self) {
         match self {
             Self::Fast(t) => t.clear(),
@@ -111,7 +120,10 @@ pub struct FrameEncoder<W: io::Write> {
     ext_dict_offset: usize,
     ext_dict_len: usize,
     src_stream_offset: usize,
-    compression_table: CompressionTable,
+    /// Made by the first block that needs it. A frame of one small
+    /// independent block never does.
+    compression_table: Option<CompressionTable>,
+    ratio: bool,
     w: W,
     content_hasher: XxHash32,
     content_len: u64,
@@ -149,7 +161,8 @@ impl<W: io::Write> FrameEncoder<W> {
         FrameEncoder {
             src: Vec::new(),
             w: wtr,
-            compression_table: CompressionTable::Fast(HashTableU32::new()),
+            compression_table: None,
+            ratio: false,
             content_hasher: XxHash32::with_seed(0),
             content_len: 0,
             dst: Vec::new(),
@@ -190,9 +203,10 @@ impl<W: io::Write> FrameEncoder<W> {
     }
 
     /// Compress with the ratio profile: smaller output, slower compression.
-    /// Each block compresses as
-    /// [`compress_ratio_into`](crate::block::compress_ratio_into) compresses
-    /// inputs over 4 KiB. Decoding is unchanged.
+    /// A frame's first block, when independent and under 64 KiB, compresses
+    /// as [`compress_ratio_into`](crate::block::compress_ratio_into) does.
+    /// Other blocks compress as it compresses inputs over 4 KiB. Decoding is
+    /// unchanged.
     ///
     /// Call it before the first write. Called later, it applies from the next
     /// block, which then finds no matches in earlier blocks.
@@ -205,7 +219,8 @@ impl<W: io::Write> FrameEncoder<W> {
     /// ```
     #[must_use]
     pub fn ratio_profile(mut self) -> Self {
-        self.compression_table = CompressionTable::Ratio(RatioTable::new());
+        self.ratio = true;
+        self.compression_table = None;
         self
     }
 
@@ -302,7 +317,9 @@ impl<W: io::Write> FrameEncoder<W> {
             self.src_end = 0;
             self.ext_dict_len = 0;
             self.content_hasher = XxHash32::with_seed(0);
-            self.compression_table.clear();
+            if let Some(table) = &mut self.compression_table {
+                table.clear();
+            }
         }
         self.is_frame_open = true;
         Ok(())
@@ -324,8 +341,9 @@ impl<W: io::Write> FrameEncoder<W> {
             self.src_stream_offset + max_block_size + WINDOW_SIZE >= u32::MAX as usize / 2;
 
         if should_reposition {
-            self.compression_table
-                .reposition((self.src_stream_offset - self.ext_dict_len) as _);
+            if let Some(table) = &mut self.compression_table {
+                table.reposition((self.src_stream_offset - self.ext_dict_len) as _);
+            }
             self.src_stream_offset = self.ext_dict_len;
         }
 
@@ -337,22 +355,37 @@ impl<W: io::Write> FrameEncoder<W> {
 
         let sink = &mut vec_sink_for_compression(&mut self.dst, 0, 0, dst_required_size);
         let ext_dict = &self.src[self.ext_dict_offset..self.ext_dict_offset + self.ext_dict_len];
-        let compress_result = if !self.dict.is_empty()
-            && (self.frame_info.block_mode == BlockMode::Independent || first_frame_block)
-        {
+        let independent = self.frame_info.block_mode == BlockMode::Independent;
+        let compress_result = if !self.dict.is_empty() && (independent || first_frame_block) {
             debug_assert_eq!(self.ext_dict_len, 0);
-            match self.compression_table {
-                CompressionTable::Fast(_) => {
-                    compress_into_sink_with_dict::<true>(src, sink, &self.dict)
-                }
-                CompressionTable::Ratio(_) => {
-                    compress_ratio_into_sink_with_dict::<true>(src, sink, &self.dict)
-                }
+            if self.ratio {
+                compress_ratio_into_sink_with_dict::<true>(src, sink, &self.dict)
+            } else {
+                compress_into_sink_with_dict::<true>(src, sink, &self.dict)
+            }
+        } else if independent
+            && first_frame_block
+            && self.compression_table.is_none()
+            && src.len() < u16::MAX as usize
+        {
+            // A frame's first independent block under 64 KiB compresses as
+            // the block API does: its small-input tables are faster and find
+            // more matches, and a frame of one block allocates no table of
+            // its own. Later blocks share one table, which they need not
+            // clear.
+            if self.ratio {
+                compress_ratio_into_sink_with_dict::<false>(src, sink, b"")
+            } else {
+                compress_into_sink_with_dict::<false>(src, sink, b"")
             }
         } else if self.ext_dict_len != 0 {
             debug_assert_eq!(self.frame_info.block_mode, BlockMode::Linked);
             let (start, offset) = (self.src_start, self.src_stream_offset);
-            match &mut self.compression_table {
+            let ratio = self.ratio;
+            match self
+                .compression_table
+                .get_or_insert_with(|| CompressionTable::new(ratio))
+            {
                 CompressionTable::Fast(t) => compress_into_sink_with_table::<true, true, false, _>(
                     input, start, sink, t, ext_dict, offset,
                 ),
@@ -362,7 +395,11 @@ impl<W: io::Write> FrameEncoder<W> {
             }
         } else {
             let (start, offset) = (self.src_start, self.src_stream_offset);
-            match &mut self.compression_table {
+            let ratio = self.ratio;
+            match self
+                .compression_table
+                .get_or_insert_with(|| CompressionTable::new(ratio))
+            {
                 CompressionTable::Fast(t) => {
                     compress_into_sink_with_table::<false, true, false, _>(
                         input, start, sink, t, b"", offset,
@@ -387,7 +424,10 @@ impl<W: io::Write> FrameEncoder<W> {
             && !self.dict.is_empty()
             && first_frame_block
         {
-            self.compression_table.seed(src, self.src_stream_offset);
+            let ratio = self.ratio;
+            self.compression_table
+                .get_or_insert_with(|| CompressionTable::new(ratio))
+                .seed(src, self.src_stream_offset);
         }
 
         let mut block_info_buffer = [0u8; BLOCK_INFO_SIZE];

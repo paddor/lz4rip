@@ -1,6 +1,7 @@
 #![cfg(feature = "frame")]
 //! `FrameDecoder` sizes its buffers and the `read_to_end` output from a
 //! frame's declared content size instead of its maximum block size.
+//! `FrameEncoder` makes no table of its own for a frame of one small block.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -136,4 +137,29 @@ fn blocks_past_the_declared_size_report_the_decoded_length() {
             }
         }
     }
+}
+
+#[test]
+fn small_ratio_frame_makes_no_large_table() {
+    let data = text(1_000);
+    let peak = |ratio: bool| {
+        peak_heap(|| {
+            let encoder = FrameEncoder::new(Vec::new());
+            let mut encoder = if ratio {
+                encoder.ratio_profile()
+            } else {
+                encoder
+            };
+            encoder.write_all(&data).unwrap();
+            encoder.finish().unwrap()
+        })
+        .1
+    };
+    let (default, ratio) = (peak(false), peak(true));
+    // Both profiles take one 8 KB table for the block, not the 64 KB table
+    // later ratio blocks share.
+    assert!(
+        ratio < default + 32 * 1024,
+        "ratio {ratio} bytes, default {default} bytes"
+    );
 }
