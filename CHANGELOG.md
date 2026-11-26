@@ -4,6 +4,27 @@
 
 ### Changed
 
+- `frame::FrameEncoder` and `frame::FrameDecoder` allocate their buffers as a
+  frame's data needs them, instead of whole blocks when the frame starts: an
+  encoder took 136 KiB and a decoder 128 KiB for 64 KiB blocks, however
+  small the frame. A frame of one small message now takes about its size,
+  and a stream takes whole blocks from its second block. With glibc, a
+  process that makes an encoder and decoder per small frame, as a cache that
+  stores values as frames does, also stops growing and trimming its heap for
+  each frame: 22,500 frames of 1 KiB, each encoded and decoded, took 66
+  `brk` calls instead of 45,076. In such a process (x86_64, ratio profile,
+  value length and value written separately), frames of 256 B to 16 KiB
+  compress 47-85% faster and decode 9-87% faster, 64 KiB ones 3% and 22%.
+  256 KiB frames decode 1-6% slower. In a warm benchmark loop, a new encoder
+  and decoder per frame compress 256 B and 1 KiB frames 1-8% faster and
+  decode them 7-17% faster. Larger frames and whole-file streams do not
+  change (within 2%).
+- `frame::FrameDecoder::read_to_end` trusts a frame's declared content size
+  for up to 16x what the frame has decoded, and for all of it once that is
+  within 16x again, instead of up to 128 MiB at the first block. A frame of
+  1,000 bytes that declares 1 GiB took 128 MiB of capacity; it now peaks at
+  147 KB. Large frames of the declared size still end with exactly that
+  capacity and decode as fast (10-51 MB Silesia files, within 0.7%).
 - `block::get_maximum_output_size` returns C lz4's `LZ4_compressBound`,
   `n + n / 255 + 16`, instead of `1.1 * n + 20`. Buffers sized with it are up
   to 9% smaller, and every compressor accepts them. Output is unchanged. The

@@ -1,7 +1,9 @@
 #![cfg(feature = "frame")]
 //! `FrameDecoder` sizes its buffers and the `read_to_end` output from a
-//! frame's declared content size instead of its maximum block size.
-//! `FrameEncoder` makes no table of its own for a frame of one small block.
+//! frame's declared content size, or with none from its blocks, instead of
+//! its maximum block size.
+//! `FrameEncoder` makes no table of its own for a frame of one small block,
+//! and its buffers grow with the data.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -116,6 +118,19 @@ fn small_frame_with_large_blocks_uses_its_content_size() {
 }
 
 #[test]
+fn small_frame_without_content_size_decodes_in_small_buffers() {
+    let data = text(1_000);
+    for mode in [BlockMode::Independent, BlockMode::Linked] {
+        let frame = encode(FrameInfo::new().block_mode(mode), &data);
+        let (output, peak) = peak_heap(|| decode(&frame).unwrap());
+        assert_eq!(output, data);
+        // The output and one small block of input and output, not buffers
+        // for a whole 64 KB block.
+        assert!(peak < 16 * 1024, "{mode:?}: peak heap {peak} bytes");
+    }
+}
+
+#[test]
 fn blocks_past_the_declared_size_report_the_decoded_length() {
     let data = text(300_000);
     for mode in [BlockMode::Independent, BlockMode::Linked] {
@@ -162,4 +177,44 @@ fn small_ratio_frame_makes_no_large_table() {
         ratio < default + 32 * 1024,
         "ratio {ratio} bytes, default {default} bytes"
     );
+}
+
+#[test]
+fn small_frame_buffers_fit_its_data() {
+    let data = text(1_000);
+    for mode in [BlockMode::Independent, BlockMode::Linked] {
+        let info = FrameInfo::new().block_mode(mode);
+        let (frame, peak) = peak_heap(|| {
+            let mut encoder = FrameEncoder::with_frame_info(info, Vec::new());
+            // Many small writes, as serializers make.
+            for chunk in data.chunks(7) {
+                encoder.write_all(chunk).unwrap();
+            }
+            encoder.finish().unwrap()
+        });
+        assert_eq!(decode(&frame).unwrap(), data);
+        // One 8 KB table and about 1 KB each of input, output and frame,
+        // not buffers for a whole 64 KB block.
+        assert!(peak < 16 * 1024, "{mode:?}: peak heap {peak} bytes");
+    }
+}
+
+#[test]
+fn false_content_size_reserves_about_what_the_frame_decodes() {
+    let data = text(1_000);
+    let info = FrameInfo::new().content_size(Some(1 << 30));
+    let mut encoder = FrameEncoder::with_frame_info(info, Vec::new());
+    encoder.write_all(&data).unwrap();
+    encoder.flush().unwrap();
+    let mut frame = encoder.into_inner();
+    frame.extend_from_slice(&[0; 4]); // end mark
+    let (result, peak) = peak_heap(|| decode(&frame));
+    match result {
+        Err(Error::ContentLengthError { expected, actual }) => {
+            assert_eq!((expected, actual), (1 << 30, 1_000));
+        }
+        result => panic!("{result:?}"),
+    }
+    // At most 256x the 1,000 bytes that decoded, not the declared 1 GiB.
+    assert!(peak < 300 * 1_000, "peak heap {peak} bytes");
 }
