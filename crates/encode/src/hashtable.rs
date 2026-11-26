@@ -200,6 +200,12 @@ impl<const N: usize, const H4: bool> HashTableU32U16<N, H4> {
     pub(crate) fn copy_from(&mut self, other: &Self) {
         self.dict.copy_from_slice(&other.dict[..]);
     }
+
+    /// Bytes of the entries on the heap.
+    #[cfg(feature = "alloc")]
+    pub(crate) const fn heap_size(&self) -> usize {
+        core::mem::size_of::<[u16; N]>()
+    }
     #[cfg(feature = "alloc")]
     #[inline]
     pub(crate) fn new() -> Self {
@@ -259,6 +265,12 @@ impl<const N: usize> HashTableU32<N> {
     #[inline]
     pub(crate) fn copy_from(&mut self, other: &Self) {
         self.dict.copy_from_slice(&other.dict[..]);
+    }
+
+    /// Bytes of the entries on the heap.
+    #[cfg(feature = "alloc")]
+    pub(crate) const fn heap_size(&self) -> usize {
+        core::mem::size_of::<[u32; N]>()
     }
     #[cfg(feature = "alloc")]
     #[inline]

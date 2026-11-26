@@ -771,6 +771,11 @@ impl Decompressor {
         }
     }
 
+    /// Bytes this decompressor holds on the heap: its copy of the dictionary.
+    pub fn heap_size(&self) -> usize {
+        self.dict.capacity()
+    }
+
     /// Decompress `input` into a new `Vec<u8>`.
     ///
     /// `uncompressed_size` must be >= the actual decompressed size. From
