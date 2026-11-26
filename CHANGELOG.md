@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.12.9] - 2026-11-26
+
 ### Added
 
 - `block::RatioDictCompressor`: the ratio profile with a dictionary. Before,
