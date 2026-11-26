@@ -18,6 +18,15 @@ use lz4rip_decode::decompress_into_sink_with_dict;
 /// as its blocks are decoded.
 const MAX_CONTENT_SIZE_RESERVE: usize = 128 * 1024 * 1024;
 
+/// In a frame with no declared content size, a compressed block first
+/// decodes into at most this many times its length, unless more of the
+/// output buffer is zeroed already. A new decoder zeroes its buffer up to the
+/// limit, and zeroing 64 KiB took longer than decoding a 4 KiB block. A
+/// block that decodes to more is decoded again with the full limit. 8x
+/// covered every Silesia slice up to 16 KiB; 4x missed often enough on xml
+/// and nci to be slower.
+const FIRST_LIMIT_EXPANSION: usize = 8;
+
 /// Returns a sink over `vec[..end]` that writes from `pos`. `vec` never
 /// shrinks, so later blocks and frames reuse bytes that were already zeroed.
 fn vec_sink_for_decompression(vec: &mut Vec<u8>, pos: usize, end: usize) -> SliceSink<'_> {
@@ -329,14 +338,21 @@ impl<R: io::Read> FrameDecoder<R> {
                 }
 
                 // Decode at most the bytes the frame still declares, so a
-                // small frame zeroes no more than its content. A block that
-                // fails within that limit is decoded again with the full
-                // block limit, so errors, including the length reported at
-                // the end mark, match an unlimited decode.
-                let remaining = frame_info.content_size.map_or(usize::MAX, |size| {
-                    usize::try_from(size.saturating_sub(self.content_len)).unwrap_or(usize::MAX)
-                });
-                let mut limit = max_block_size.min(remaining);
+                // small frame zeroes no more than its content. With no
+                // declared size, guess from the block's length
+                // (`FIRST_LIMIT_EXPANSION`). A block that fails within the
+                // first limit is decoded again with the full block limit, so
+                // errors, including the length reported at the end mark,
+                // match an unlimited decode.
+                let mut limit = match frame_info.content_size {
+                    Some(size) => {
+                        usize::try_from(size.saturating_sub(self.content_len)).unwrap_or(usize::MAX)
+                    }
+                    None => len
+                        .saturating_mul(FIRST_LIMIT_EXPANSION)
+                        .max(self.dst.len().saturating_sub(self.dst_start)),
+                }
+                .min(max_block_size);
                 let decomp_size = loop {
                     match self.decompress_block(len, limit) {
                         Err(_) if limit < max_block_size => limit = max_block_size,

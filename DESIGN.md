@@ -240,7 +240,7 @@ default (`compress_core`) with other const parameters:
 |---|---|---|---:|---|
 | up to 4 KiB | 4K x `u16` (8 KB) | 4 bytes | 6 | no |
 | 4-64 KiB | 16K x `u16` (32 KB) | 5 bytes | 6 | yes |
-| from 64 KiB, frames | 16K x `u32` (64 KB) | 5 bytes | 6 | yes |
+| from 64 KiB, other frame blocks | 16K x `u32` (64 KB) | 5 bytes | 6 | yes |
 
 `RatioCompressor` keeps one `u32` table for both larger rows, with the same
 output. Up to 256 B (`RATIO_EPOCH_THRESHOLD`) it reuses its small table
@@ -326,6 +326,46 @@ MID: the fastest HC level, and the same kind of search as the ratio profile
 faster than every HC level. Levels 3 and up compress smaller and slower.
 The ratio profile differs in one table with a 5-byte hash (64 KB, 8 KB up
 to 4 KiB of input), no `ip + 1` probe, and the fast-mode skip.
+
+## Frames
+
+The frame code wraps the block code. A frame's first independent block under
+64 KiB compresses as the block API does, with a fresh table sized for the
+input, as `compress` and `compress_ratio` make. Later blocks, linked blocks
+and blocks from 64 KiB share one table, made by the first of them
+(`HashTableU32`, or 16K x `u32` for the ratio profile). It is not cleared
+between blocks: positions keep growing, so entries from earlier independent
+blocks fail the range test. A frame of one small block, as one frame per
+message or record writes, so makes no table of its own. Before, each new
+encoder made an 8 KB table, or 64 KB with the ratio profile, and compressed
+through it more slowly (`u32` positions, no `NEAR`).
+
+The decoder zeroes its output buffer up to each block's decode limit, since
+safe code decodes into initialized memory only. The buffer keeps its length,
+so a reused decoder zeroes each byte once. With a declared content size, the
+limit is what the frame still declares. Without one, it was the block
+maximum: a new decoder zeroed 64 KiB (up to 4 MiB) for a 1 KiB frame, which
+took longer than decoding it. The first limit is 8x the block's compressed
+length (`FIRST_LIMIT_EXPANSION`), or the bytes already zeroed if more. A
+block that decodes to more is decoded again with the full limit, so errors
+match an unlimited decode.
+
+Measured on x86_64 (i7-8700B, one core, best of 10) with a new encoder or
+decoder per frame, 64 slices per Silesia file, geomean change from 0.12.7:
+
+| Frame | 256 B | 1 KiB | 4 KiB | 16 KiB | 64 KiB |
+|---|---:|---:|---:|---:|---:|
+| decode | -68% | -63% | -31% | -2.5% | +1.0% |
+| compress, default | -11% | -9% | -10% | -6% | 0% |
+| compress, ratio profile | -62% | -36% | -13% | -18% | 0% |
+
+At 64 KiB, xml and nci decoded 8% and 4% slower: their slices that compress
+more than 8x decode twice. A 4x first limit missed often enough to make
+16 KiB xml and nci slices 30-40% slower. Default output got 0-1.8% smaller
+(the block API's 4K-entry table below 64 KiB). Ratio output at 4 KiB follows
+the block API's C lz4 settings: 0.3% larger geomean, up to 5% on reymont and
+nci. Whole-file streams (64 KiB blocks, independent and linked) and frames
+of flushed 200 B messages did not change.
 
 ## Crate split
 

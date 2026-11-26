@@ -568,3 +568,31 @@ fn block_size_auto_resolution() {
         );
     }
 }
+
+/// A frame's first independent block under 64 KiB holds what the block API
+/// writes for the same input, in both profiles.
+#[test]
+fn first_small_block_matches_the_block_api() {
+    let mut text = Vec::new();
+    for i in 0..4000 {
+        text.extend_from_slice(format!("id={i} name=item-{} ok\n", i % 97).as_bytes());
+    }
+    for len in [100, 1000, 4096, 4097, 20_000, 65_534] {
+        let input = &text[..len];
+        for ratio in [false, true] {
+            let enc = lz4rip::frame::FrameEncoder::new(Vec::new());
+            let mut enc = if ratio { enc.ratio_profile() } else { enc };
+            enc.write_all(input).unwrap();
+            let frame = enc.finish().unwrap();
+            let block = if ratio {
+                lz4rip::block::compress_ratio(input)
+            } else {
+                lz4rip::block::compress(input)
+            };
+            // Magic, FLG, BD and header checksum, then the block size.
+            let size = u32::from_le_bytes(frame[7..11].try_into().unwrap());
+            assert_eq!(size as usize, block.len(), "len {len}, ratio {ratio}");
+            assert_eq!(&frame[11..11 + block.len()], &block[..]);
+        }
+    }
+}

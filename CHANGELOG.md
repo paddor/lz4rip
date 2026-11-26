@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `frame::FrameDecoder` zeroes less output for frames with no declared
+  content size. A compressed block first decodes into at most 8x its length
+  instead of the whole block size (64 KiB to 4 MiB). A new decoder per small
+  frame decodes 1 KiB Silesia slices 63% faster, 4 KiB 31% and 16 KiB 2.5%
+  (x86_64). A block that decodes to more is decoded again: 64 KiB slices of
+  xml and nci, which compress more than 8x, decoded 4-8% slower. Reused
+  decoders do not change.
+- `frame::FrameEncoder` compresses a frame's first independent block under
+  64 KiB as the block API does, and makes its own table only for later
+  blocks. A frame of one small block compresses 6-11% faster at 256 B to
+  16 KiB, and 13-62% faster with `ratio_profile`, which no longer makes a
+  64 KB table for it. Default output is up to 1.8% smaller. Ratio output at
+  4 KiB uses C lz4's settings, as `block::compress_ratio` does. Streams do
+  not change.
+
 ## [0.12.7] - 2026-11-26
 
 The changes are in `lz4rip-encode` 0.10.17, which this release requires.

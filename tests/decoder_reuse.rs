@@ -17,6 +17,13 @@ const END_MARK: [u8; 4] = [0; 4];
 /// Compressed block whose first match reaches 65535 bytes before the block
 /// start, past any dictionary used here.
 const FAR_MATCH_BLOCK: [u8; 5] = [0x00, 0xFF, 0xFF, 0x10, b'z'];
+/// Compressed block that decodes 1001 bytes, far more than 8x its length,
+/// before a match that reaches past the block start and any dictionary used
+/// here. A new decoder of a frame with no content size fails within its
+/// first, smaller limit, then decodes again with the full one.
+const FAR_MATCH_AFTER_RUN_BLOCK: [u8; 13] = [
+    0x1F, b'a', 0x01, 0x00, 0xFF, 0xFF, 0xFF, 0xD8, 0x00, 0xFF, 0xFF, 0x10, b'z',
+];
 
 fn dict() -> Vec<u8> {
     b"level=INFO service=ingest event= message=decoder reuse ".repeat(8)
@@ -163,6 +170,8 @@ fn frames(dict: Option<&[u8]>) -> Frames {
         &data[BLOCK / 2..BLOCK * 2],
     );
     let small = encode(FrameInfo::new(), dict, &text(3000));
+    // One block that decodes to over 8x its length: a new decoder retries it.
+    let runs = encode(FrameInfo::new(), dict, &b"0123456789".repeat(5000));
 
     let header_len = header(full.content_size(None), dict).len() + 8;
     let blocks = block_offsets(&linked, header_len, true);
@@ -191,13 +200,18 @@ fn frames(dict: Option<&[u8]>) -> Frames {
     bad_match.extend(compressed_block(&FAR_MATCH_BLOCK));
     bad_match.extend(END_MARK);
 
+    let mut bad_match_after_run = header(plain, dict);
+    bad_match_after_run.extend(compressed_block(&FAR_MATCH_AFTER_RUN_BLOCK));
+    bad_match_after_run.extend(END_MARK);
+
     Frames {
-        valid: vec![linked, independent, small],
+        valid: vec![linked, independent, small, runs],
         malformed: vec![
             ("header checksum", header_checksum),
             ("first block checksum", block_checksum),
             ("truncated second block", truncated_block),
             ("far match in second block", bad_match),
+            ("far match after a long run", bad_match_after_run),
             ("missing end mark", truncated_end),
             ("content checksum", content_checksum),
             ("content size", content_size),
