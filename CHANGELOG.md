@@ -19,6 +19,13 @@
   compressible slices and 1.9-6.3x on incompressible ones, with lz4rip's
   default mode as a gray reference.
 
+### Fixed
+
+- `DictTrainer::train` no longer panics for a `max_dict_size` of 4 to 31
+  bytes. It cut the samples into segments of `max_dict_size / 4` bytes,
+  shorter than the 8-byte strings it scores them by. Segments now hold at
+  least one such string.
+
 ## [0.12.5] - 2026-11-22
 
 The fix is in `lz4rip-decode` 0.11.2, which this release requires.

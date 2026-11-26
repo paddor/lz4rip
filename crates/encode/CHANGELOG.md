@@ -13,6 +13,13 @@
   lz4_flex's. Compression runs at 377 MB/s, vs 580 for the default and 509
   for C lz4. Needs `alloc`. Decoding and default compression do not change.
 
+### Fixed
+
+- `DictTrainer::train` no longer panics for a `max_dict_size` of 4 to 31
+  bytes. It cut the samples into segments of `max_dict_size / 4` bytes,
+  shorter than the 8-byte strings it scores them by. Segments now hold at
+  least one such string.
+
 ## [0.10.15] - 2026-11-22
 
 ### Changed
