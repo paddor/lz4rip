@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.12.6] - 2026-11-26
+
+The changes are in `lz4rip-encode` 0.10.16, which this release requires.
+
 ### Added
 
 - Ratio profile: `block::compress_ratio`, `block::compress_ratio_into`,
