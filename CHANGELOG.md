@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.12.8] - 2026-11-26
+
 ### Changed
 
 - `frame::FrameDecoder` zeroes less output for frames with no declared
