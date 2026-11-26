@@ -6,7 +6,8 @@ use alloc::vec::Vec;
 
 use crate::compress::{
     CompressorRefN, DEFAULT_DICT_ENTRIES, DEFAULT_NODICT_ENTRIES, HashTableU32U16, RatioSmallTable,
-    RatioTable, compress_dict_tables, compress_ratio_tables, get_maximum_output_size, init_dict,
+    RatioTable, compress_dict_tables, compress_ratio_tables, finish_vec, get_maximum_output_size,
+    init_dict,
 };
 use lz4rip_core::CompressError;
 use lz4rip_core::{MINMATCH, WINDOW_SIZE};
@@ -160,8 +161,7 @@ impl<const N: usize> DictCompressorN<N> {
         let max = get_maximum_output_size(input.len());
         let mut out = alloc::vec![0u8; max];
         let n = self.compress_into(input, &mut out).unwrap();
-        out.truncate(n);
-        out
+        finish_vec(out, max, n)
     }
 }
 
@@ -235,7 +235,6 @@ impl RatioCompressor {
         let max = get_maximum_output_size(input.len());
         let mut out = alloc::vec![0u8; max];
         let n = self.compress_into(input, &mut out).unwrap();
-        out.truncate(n);
-        out
+        finish_vec(out, max, n)
     }
 }

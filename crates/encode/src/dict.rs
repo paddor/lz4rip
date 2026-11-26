@@ -89,8 +89,16 @@ impl DictTrainer {
         if self.samples.len() < 2 {
             return Vec::new();
         }
-        let sample_refs: Vec<&[u8]> = self.samples.iter().map(|s| s.as_slice()).collect();
-        cover_select(&sample_refs, self.max_dict_size)
+        // Move the samples into one buffer, freeing each once copied, so
+        // training holds the sample data once.
+        let mut concat = Vec::with_capacity(self.total_bytes);
+        let mut offsets = Vec::with_capacity(self.samples.len() + 1);
+        for sample in self.samples {
+            offsets.push(concat.len());
+            concat.extend_from_slice(&sample);
+        }
+        offsets.push(concat.len());
+        cover_select(concat, &offsets, self.max_dict_size)
     }
 }
 
@@ -105,17 +113,12 @@ fn hash_dmer(data: &[u8]) -> usize {
     v.wrapping_mul(0x9E37_79B9_7F4A_7C15) as usize
 }
 
-fn cover_select(samples: &[&[u8]], dict_size: usize) -> Vec<u8> {
-    let mut concat = Vec::new();
-    let mut offsets = Vec::new();
-    for &sample in samples {
-        offsets.push(concat.len());
-        concat.extend_from_slice(sample);
-    }
-    offsets.push(concat.len());
-
+/// Picks the dict from the samples in `concat`, sample `s` at
+/// `offsets[s]..offsets[s + 1]`.
+fn cover_select(mut concat: Vec<u8>, offsets: &[usize], dict_size: usize) -> Vec<u8> {
     if concat.len() < D {
-        return concat[..dict_size.min(concat.len())].to_vec();
+        concat.truncate(dict_size);
+        return concat;
     }
 
     let num_dmers = concat.len() - D + 1;
@@ -126,7 +129,7 @@ fn cover_select(samples: &[&[u8]], dict_size: usize) -> Vec<u8> {
     }
 
     let mut freqs = vec![0u32; FREQ_SIZE];
-    for s in 0..samples.len() {
+    for s in 0..offsets.len() - 1 {
         let start = offsets[s];
         let end = offsets[s + 1];
         if end - start < D {
@@ -149,22 +152,20 @@ fn cover_select(samples: &[&[u8]], dict_size: usize) -> Vec<u8> {
     let mut segments: Vec<(usize, u64)> = Vec::new();
     let mut collected = 0usize;
 
+    let freq = |freqs: &[u32], i: usize| u64::from(freqs[hashes[i] as usize]);
     while collected < dict_size {
-        let mut prefix = vec![0u64; num_dmers + 1];
-        prefix[0] = 0;
-        for i in 0..num_dmers {
-            prefix[i + 1] = prefix[i] + freqs[hashes[i] as usize] as u64;
-        }
-
+        // A segment's score is its d-mers' frequency sum, kept for a window
+        // sliding over every start position.
+        let mut score: u64 = (0..seg_dmers).map(|i| freq(&freqs, i)).sum();
         let mut best_pos = 0;
         let mut best_score = 0u64;
-        for pos in 0..=concat.len() - k {
-            if !used[pos] {
-                let score = prefix[pos + seg_dmers] - prefix[pos];
-                if score > best_score {
-                    best_score = score;
-                    best_pos = pos;
-                }
+        for (pos, &pos_used) in used[..=concat.len() - k].iter().enumerate() {
+            if pos > 0 {
+                score = score + freq(&freqs, pos + seg_dmers - 1) - freq(&freqs, pos - 1);
+            }
+            if !pos_used && score > best_score {
+                best_score = score;
+                best_pos = pos;
             }
         }
 

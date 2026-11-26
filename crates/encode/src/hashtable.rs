@@ -163,6 +163,23 @@ const fn assert_valid_entries(n: usize) {
     );
 }
 
+/// A zeroed table on the heap, zeroed by writing. `calloc` leaves memory
+/// fresh from the OS to its zero pages, and as the compressor reads each
+/// entry before writing it, every page then faults twice: once to map the
+/// shared zero page and once to copy it.
+#[cfg(feature = "alloc")]
+#[inline]
+fn zeroed_table<T: Copy + Default, const N: usize>() -> Box<[T; N]> {
+    let mut table = alloc::vec::Vec::with_capacity(N);
+    // Without it, LLVM folds the allocation and the fill into `calloc`.
+    core::hint::black_box(&mut table);
+    table.resize(N, T::default());
+    match table.into_boxed_slice().try_into() {
+        Ok(table) => table,
+        Err(_) => unreachable!("the table holds N entries"),
+    }
+}
+
 /// A hash table with `N` entries using 16-bit values (`2 * N` bytes).
 ///
 /// `N` must be a power of two (checked at compile time in [`new`](Self::new)).
@@ -181,8 +198,9 @@ impl<const N: usize, const H4: bool> HashTableU32U16<N, H4> {
     #[inline]
     pub(crate) fn new() -> Self {
         const { assert_valid_entries(N) };
-        let dict = alloc::vec![0; N].into_boxed_slice().try_into().unwrap();
-        Self { dict }
+        Self {
+            dict: zeroed_table(),
+        }
     }
     #[cfg(not(feature = "alloc"))]
     #[inline]
@@ -235,8 +253,9 @@ impl<const N: usize> HashTableU32<N> {
     /// Create a new zeroed hash table.
     pub fn new() -> Self {
         const { assert_valid_entries(N) };
-        let dict = alloc::vec![0; N].into_boxed_slice().try_into().unwrap();
-        Self { dict }
+        Self {
+            dict: zeroed_table(),
+        }
     }
     #[cfg(not(feature = "alloc"))]
     #[inline]

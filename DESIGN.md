@@ -56,6 +56,15 @@ sets memory and the hash shift. It must be a power of two and at least
   dict, run through the single-table path (on the stack without `alloc`).
   The dict then helps only about the first 64 KB of output.
 
+With `alloc`, tables live on the heap and are zeroed by writing, not with
+`calloc` (`zeroed_table`). Memory that `calloc` takes fresh from the OS stays
+mapped to the shared zero page. The compressor reads each entry before it
+writes it, so every page then faults twice: once to map the zero page, once
+to copy it. A frame encoder for 64 KiB values whose table allocation grew
+the heap took 24.5 page faults per frame instead of 16 and compressed 10%
+slower (x86_64, glibc). `core::hint::black_box` keeps LLVM from folding the
+allocation and the fill back into `calloc`.
+
 ### Picking a table size
 
 Output size with `N` = 256 vs the default: +0.8% on 180 B Silesia slices with
@@ -146,6 +155,14 @@ sequence (literal run and match length below 15) takes one
 `first_chunk_mut::<19>()` test and a fixed 16-byte literal copy.
 `count_same_bytes` compares the first 8 bytes directly; longer matches go to
 an out-of-line loop over slices cut to one length.
+
+The output bound, `get_maximum_output_size`, is C lz4's `LZ4_compressBound`,
+`n + n / 255 + 16`: a block of all literals, whose length takes one more byte
+per 255. lz4_flex's `1.1 * n + 20` was up to 9% larger. The encoder rejects
+a smaller buffer up front, and its writes stay checked, so a bound too small
+would panic, not overflow. `tests/output_size.rs` compresses random input
+into buffers of exactly the bound with every compressor, at every size up to
+4 KiB and around multiples of 255.
 
 Versus the former unchecked encoder (x86_64, best of three, same session):
 
