@@ -54,7 +54,7 @@ fn grow_zeroed(vec: &mut Vec<u8>, start: usize, end: usize, capacity: impl FnOnc
             let capacity = capacity(end).max(end);
             if start == 0 {
                 // Freed first, so the allocator can reuse its memory.
-                *vec = Vec::new();
+                drop(core::mem::take(vec));
             }
             vec.reserve_exact(capacity - vec.len());
         }
