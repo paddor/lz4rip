@@ -12,6 +12,10 @@
   16 KB of tables while inputs and dictionary stay within 4 KiB, more for
   larger inputs, made on first use. Its output decodes with
   `block::decompress_into_with_dict` and C lz4's dictionary decoder.
+- `heap_size()` on `block::Compressor`, `DictCompressor`, `RatioCompressor`,
+  `RatioDictCompressor` and `Decompressor`: the bytes each holds on the heap,
+  its tables made so far and its copy of the dictionary. A binding can
+  report the memory per connection with it.
 
 ### Changed
 

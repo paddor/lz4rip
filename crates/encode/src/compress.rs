@@ -91,6 +91,26 @@ pub(crate) struct RatioDictTables {
     large: Option<(RatioTable, RatioTable)>,
 }
 
+#[cfg(feature = "alloc")]
+impl RatioDictTables {
+    /// Bytes of the tables made so far.
+    pub(crate) fn heap_size(&self) -> usize {
+        let small = self
+            .small
+            .as_ref()
+            .map_or(0, |(p, t)| p.heap_size() + t.heap_size());
+        let mid = self
+            .mid
+            .as_ref()
+            .map_or(0, |(p, t)| p.heap_size() + t.heap_size());
+        let large = self
+            .large
+            .as_ref()
+            .map_or(0, |(p, t)| p.heap_size() + t.heap_size());
+        small + mid + large
+    }
+}
+
 /// The table pair of a class: `dict` hashed into the first table, which the
 /// working one copies for each input.
 #[cfg(feature = "alloc")]
@@ -1192,6 +1212,12 @@ impl<const N: usize> CompressorRefN<N> {
             table: HashTableU32::<N>::new(),
             stream_offset: 0,
         }
+    }
+
+    /// Bytes of the table on the heap.
+    #[cfg(feature = "alloc")]
+    pub(crate) fn heap_size(&self) -> usize {
+        self.table.heap_size()
     }
 
     /// Compress `input` into `output`, returning the number of compressed bytes.

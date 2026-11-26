@@ -53,6 +53,11 @@ impl<const N: usize> CompressorN<N> {
         }
     }
 
+    /// Bytes this compressor holds on the heap: its table (`4 * N`).
+    pub fn heap_size(&self) -> usize {
+        self.inner.heap_size()
+    }
+
     /// Compress `input` into `output`, returning the number of compressed bytes.
     ///
     /// `output` must be at least [`get_maximum_output_size`](crate::get_maximum_output_size)`(input.len())` bytes.
@@ -140,6 +145,12 @@ impl<const N: usize> DictCompressorN<N> {
         }
     }
 
+    /// Bytes this compressor holds on the heap: its two tables (`2 * N`
+    /// each) and its copy of the dictionary.
+    pub fn heap_size(&self) -> usize {
+        self.table.heap_size() + self.pristine.heap_size() + self.dict.capacity()
+    }
+
     /// Compress `input` into `output`, returning the number of compressed bytes.
     ///
     /// `output` must be at least [`get_maximum_output_size`](crate::get_maximum_output_size)`(input.len())` bytes.
@@ -213,6 +224,12 @@ impl RatioCompressor {
             small_offset: 1,
             large: None,
         }
+    }
+
+    /// Bytes this compressor holds on the heap: its 8 KB table, and the
+    /// 64 KB one once an input above 4 KiB made it.
+    pub fn heap_size(&self) -> usize {
+        self.small.heap_size() + self.large.as_ref().map_or(0, RatioTable::heap_size)
     }
 
     /// Compress `input` into `output`, returning the number of compressed bytes.
@@ -320,5 +337,11 @@ impl RatioDictCompressor {
         let mut out = alloc::vec![0u8; max];
         let n = self.compress_into(input, &mut out).unwrap();
         finish_vec(out, max, n)
+    }
+
+    /// Bytes this compressor holds on the heap: its copy of the dictionary,
+    /// and the tables its inputs have made so far.
+    pub fn heap_size(&self) -> usize {
+        self.dict.capacity() + self.tables.heap_size()
     }
 }
