@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- `block::RatioDictCompressor`: the ratio profile with a dictionary. Before,
+  only a frame encoder combined the two, and it hashed the dictionary for
+  each frame. The compressor hashes it once and copies its table for each
+  input, with the same output: with a 2 KB dictionary, 64 B messages
+  compress 3.6-4.3x as fast, 256 B 1.8-2.8x and 1 KiB 1.15-1.4x. It holds
+  16 KB of tables while inputs and dictionary stay within 4 KiB, more for
+  larger inputs, made on first use. Its output decodes with
+  `block::decompress_into_with_dict` and C lz4's dictionary decoder.
+
 ### Changed
 
 - `frame::FrameEncoder` and `frame::FrameDecoder` allocate their buffers as a

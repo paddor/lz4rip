@@ -5,11 +5,13 @@ use core::fmt;
 use alloc::vec::Vec;
 
 use crate::compress::{
-    CompressorRefN, DEFAULT_DICT_ENTRIES, DEFAULT_NODICT_ENTRIES, HashTableU32U16, RatioSmallTable,
-    RatioTable, compress_dict_tables, compress_ratio_tables, finish_vec, get_maximum_output_size,
+    CompressorRefN, DEFAULT_DICT_ENTRIES, DEFAULT_NODICT_ENTRIES, HashTableU32U16, RatioDictTables,
+    RatioSmallTable, RatioTable, compress_dict_tables, compress_ratio_dict_tables,
+    compress_ratio_into_sink_with_dict, compress_ratio_tables, finish_vec, get_maximum_output_size,
     init_dict,
 };
 use lz4rip_core::CompressError;
+use lz4rip_core::SliceSink;
 use lz4rip_core::{MINMATCH, WINDOW_SIZE};
 
 /// A reusable no-dict block compressor (owning) with `N` hash-table entries.
@@ -228,6 +230,88 @@ impl RatioCompressor {
             input,
             output,
         )
+    }
+
+    /// Compress `input` into a new `Vec<u8>`.
+    pub fn compress(&mut self, input: &[u8]) -> Vec<u8> {
+        let max = get_maximum_output_size(input.len());
+        let mut out = alloc::vec![0u8; max];
+        let n = self.compress_into(input, &mut out).unwrap();
+        finish_vec(out, max, n)
+    }
+}
+
+/// A reusable block compressor with the ratio profile and a dictionary.
+///
+/// Output equals the ratio profile's with the same dictionary hashed for each
+/// input, as a frame encoder with a dictionary compresses a block. This
+/// compressor hashes the dictionary once per size class of
+/// dictionary + input and copies that table for each input instead: 8 KB up to
+/// 4 KiB, 32 KB below 64 KiB, and 64 KB above. A class's tables are made by
+/// its first input, two per class. Decode with the same dictionary, e.g.
+/// [`decompress_into_with_dict`](https://docs.rs/lz4rip/latest/lz4rip/block/fn.decompress_into_with_dict.html).
+///
+/// A dictionary longer than the LZ4 window is trimmed to its last
+/// [`WINDOW_SIZE`] bytes. One shorter than 4 bytes is ignored: the output is
+/// then [`RatioCompressor`]'s, and each call makes its own table.
+///
+/// # Example
+/// ```
+/// use lz4rip_encode::{RatioDictCompressor, get_maximum_output_size};
+///
+/// let dict = b"hello world, hello rust, hello lz4";
+/// let mut comp = RatioDictCompressor::new(dict);
+/// let input = b"hello world, hello lz4!";
+/// let mut output = vec![0u8; get_maximum_output_size(input.len())];
+/// let compressed_len = comp.compress_into(input, &mut output).unwrap();
+/// ```
+pub struct RatioDictCompressor {
+    dict: Vec<u8>,
+    tables: RatioDictTables,
+}
+
+impl fmt::Debug for RatioDictCompressor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RatioDictCompressor")
+            .field("dict_len", &self.dict.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl RatioDictCompressor {
+    /// Create a new compressor with a copy of `dict`. Its tables are made by
+    /// the first inputs that need them.
+    #[must_use]
+    pub fn new(dict: &[u8]) -> Self {
+        let trimmed = if dict.len() < MINMATCH {
+            b"".as_slice()
+        } else if dict.len() > WINDOW_SIZE {
+            &dict[dict.len() - WINDOW_SIZE..]
+        } else {
+            dict
+        };
+        RatioDictCompressor {
+            dict: trimmed.to_vec(),
+            tables: RatioDictTables::default(),
+        }
+    }
+
+    /// Compress `input` into `output`, returning the number of compressed bytes.
+    ///
+    /// `output` must be at least [`get_maximum_output_size`](crate::get_maximum_output_size)`(input.len())` bytes.
+    pub fn compress_into(
+        &mut self,
+        input: &[u8],
+        output: &mut [u8],
+    ) -> Result<usize, CompressError> {
+        if self.dict.is_empty() {
+            return compress_ratio_into_sink_with_dict::<false>(
+                input,
+                &mut SliceSink::new(output, 0),
+                b"",
+            );
+        }
+        compress_ratio_dict_tables(&mut self.tables, &self.dict, input, output)
     }
 
     /// Compress `input` into a new `Vec<u8>`.

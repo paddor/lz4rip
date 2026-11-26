@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- `RatioDictCompressor`: the ratio profile with a dictionary, hashed once
+  and copied for each input instead of hashed for each input. Output is
+  unchanged: with a 2 KB dictionary, 64 B messages compress 3.6-4.3x as
+  fast, 256 B 1.8-2.8x and 1 KiB 1.15-1.4x.
+
 ### Changed
 
 - `get_maximum_output_size` returns C lz4's `LZ4_compressBound`,

@@ -194,6 +194,12 @@ pub(crate) struct HashTableU32U16<const N: usize = DEFAULT_DICT_ENTRIES, const H
     dict: [u16; N],
 }
 impl<const N: usize, const H4: bool> HashTableU32U16<N, H4> {
+    /// Copies `other`'s entries: a working copy of a dict-seeded table.
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub(crate) fn copy_from(&mut self, other: &Self) {
+        self.dict.copy_from_slice(&other.dict[..]);
+    }
     #[cfg(feature = "alloc")]
     #[inline]
     pub(crate) fn new() -> Self {
@@ -248,6 +254,12 @@ impl<const N: usize> Default for HashTableU32<N> {
     }
 }
 impl<const N: usize> HashTableU32<N> {
+    /// Copies `other`'s entries: a working copy of a dict-seeded table.
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub(crate) fn copy_from(&mut self, other: &Self) {
+        self.dict.copy_from_slice(&other.dict[..]);
+    }
     #[cfg(feature = "alloc")]
     #[inline]
     /// Create a new zeroed hash table.
