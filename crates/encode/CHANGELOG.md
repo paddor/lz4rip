@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.16] - 2026-11-26
+
 ### Added
 
 - Ratio profile: `compress_ratio`, `compress_ratio_into` and
