@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `RatioCompressor` makes its 64 KB table on its first input above 4 KiB,
+  not when it is created, so one that only compresses small inputs takes
+  8 KB instead of 72 KB. Output is unchanged.
+
 ## [0.10.16] - 2026-11-26
 
 ### Added

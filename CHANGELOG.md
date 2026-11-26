@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `block::RatioCompressor` makes its 64 KB table on its first input above
+  4 KiB, not when it is created. A compressor that only sees small messages,
+  as one per connection does, takes 8 KB instead of 72 KB. Output is
+  unchanged.
+
 ## [0.12.6] - 2026-11-26
 
 The changes are in `lz4rip-encode` 0.10.16, which this release requires.
