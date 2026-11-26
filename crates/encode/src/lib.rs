@@ -31,7 +31,9 @@ pub use compress::{
 #[cfg(feature = "alloc")]
 pub use compress::{compress, compress_ratio, compress_ratio_into};
 #[cfg(feature = "alloc")]
-pub use compressor::{Compressor, CompressorN, DictCompressor, DictCompressorN, RatioCompressor};
+pub use compressor::{
+    Compressor, CompressorN, DictCompressor, DictCompressorN, RatioCompressor, RatioDictCompressor,
+};
 #[cfg(feature = "alloc")]
 pub use dict::DictTrainer;
 pub use lz4rip_core::CompressError;

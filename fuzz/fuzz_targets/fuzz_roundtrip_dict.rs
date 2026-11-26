@@ -1,7 +1,7 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
 
-use lz4rip::block::{Decompressor, DictCompressor};
+use lz4rip::block::{Decompressor, DictCompressor, RatioDictCompressor};
 
 /// Round-trip with external dictionary. Targets:
 /// - Dict exactly at WINDOW_SIZE (65536) boundary
@@ -45,6 +45,14 @@ fuzz_target!(|input: Input| {
         .decompress_into(&comp_buf[..comp_len], &mut decomp_buf)
         .unwrap();
     assert_eq!(&payload[..], &decomp_buf[..decomp_len]);
+
+    // Ratio profile, twice through one compressor: its working table must
+    // not keep anything from the first input.
+    let mut ratio = RatioDictCompressor::new(dict);
+    let first = ratio.compress(&payload);
+    assert_eq!(ratio.compress(&payload), first);
+    let decompressed = decompressor.decompress(&first, payload.len()).unwrap();
+    assert_eq!(payload, decompressed);
 
     // Cross-check: decompress WITHOUT dict should fail or produce wrong output
     // (must not panic either way).

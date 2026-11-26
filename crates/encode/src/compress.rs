@@ -74,6 +74,90 @@ pub(crate) type RatioSmallTable = HashTableU32U16<4096, true>;
 /// 64 KiB need its `u32` positions.
 pub type RatioTable = HashTableU32<RATIO_ENTRIES>;
 
+/// Ratio profile table above `RATIO_SMALL_LIMIT` while dict + input stays
+/// below 64 KiB (32 KB of `u16` positions).
+#[cfg(feature = "alloc")]
+type RatioMidTable = HashTableU32U16<RATIO_ENTRIES>;
+
+/// The tables of [`RatioDictCompressor`](crate::RatioDictCompressor), one
+/// pair per size class of dict + input, as `compress_ratio_into_sink_with_dict`
+/// picks them. Each pair holds the dict hashed once (`.0`) and a working copy
+/// (`.1`), made by the first input of its class.
+#[cfg(feature = "alloc")]
+#[derive(Default)]
+pub(crate) struct RatioDictTables {
+    small: Option<(RatioSmallTable, RatioSmallTable)>,
+    mid: Option<(RatioMidTable, RatioMidTable)>,
+    large: Option<(RatioTable, RatioTable)>,
+}
+
+/// The table pair of a class: `dict` hashed into the first table, which the
+/// working one copies for each input.
+#[cfg(feature = "alloc")]
+fn seeded_pair<T: HashTable>(new: fn() -> T, dict: &[u8]) -> (T, T) {
+    let mut pristine = new();
+    let mut dict = dict;
+    init_dict(&mut pristine, &mut dict);
+    (pristine, new())
+}
+
+/// Compress `input` with the ratio profile and `dict` (at least 4 and at most
+/// `WINDOW_SIZE` bytes), hashing the dict once per size class instead of per
+/// call. Each call copies the class's dict table (8 KB for inputs up to 4 KiB
+/// with the dict), as C lz4 copies a dict's state for larger inputs. Output
+/// equals `compress_ratio_into_sink_with_dict::<true>`.
+#[cfg(feature = "alloc")]
+pub(crate) fn compress_ratio_dict_tables(
+    tables: &mut RatioDictTables,
+    dict: &[u8],
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<usize, CompressError> {
+    debug_assert!(dict.len() >= MINMATCH && dict.len() <= WINDOW_SIZE);
+    let mut sink = SliceSink::new(output, 0);
+    let span = dict.len() + input.len();
+    if span <= RATIO_SMALL_LIMIT {
+        let (pristine, table) = tables
+            .small
+            .get_or_insert_with(|| seeded_pair(RatioSmallTable::new, dict));
+        table.copy_from(pristine);
+        compress_core::<_, true, true, false, true, RATIO_SKIP, false, _>(
+            input,
+            0,
+            &mut sink,
+            table,
+            dict,
+            dict.len(),
+        )
+    } else if span < u16::MAX as usize {
+        let (pristine, table) = tables
+            .mid
+            .get_or_insert_with(|| seeded_pair(RatioMidTable::new, dict));
+        table.copy_from(pristine);
+        compress_core::<_, true, true, false, true, RATIO_SKIP, true, _>(
+            input,
+            0,
+            &mut sink,
+            table,
+            dict,
+            dict.len(),
+        )
+    } else {
+        let (pristine, table) = tables
+            .large
+            .get_or_insert_with(|| seeded_pair(RatioTable::new, dict));
+        table.copy_from(pristine);
+        compress_core::<_, true, true, false, false, RATIO_SKIP, true, _>(
+            input,
+            0,
+            &mut sink,
+            table,
+            dict,
+            dict.len(),
+        )
+    }
+}
+
 /// Dict inputs up to this size reuse the main table across calls (epoch
 /// reuse) instead of clearing it. Above it, reuse gained nothing on a stream
 /// of different messages and made repeated 8 KB text 20-30% slower.

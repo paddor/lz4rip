@@ -103,7 +103,7 @@ pub mod block {
     #[cfg(feature = "alloc")]
     pub use lz4rip_encode::{
         Compressor, CompressorN, DictCompressor, DictCompressorN, DictTrainer, RatioCompressor,
-        compress, compress_ratio, compress_ratio_into,
+        RatioDictCompressor, compress, compress_ratio, compress_ratio_into,
     };
 }
 

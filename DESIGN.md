@@ -307,6 +307,25 @@ Tried and dropped (512 KiB chunks unless noted):
 - `FILL` skipping end positions inside short matches: 7% slower, from
   branches on the match length.
 
+With a dictionary, the one-shot path and the frame encoder hash the dict
+into a fresh table for each input: about 700 positions for 2 KB, which cost
+more than compressing a short message. `RatioDictCompressor` hashes it once
+per size class of dict + input (the same three tables) and copies that
+table for each input, as C lz4 copies a dict's state for larger inputs.
+Output is the same. With a 2 KB dict trained on each file (DictTrainer, 400
+B samples), on 64 Silesia slices of dickens, xml, nci and osdb:
+
+| Message | per-input dict hashing | `RatioDictCompressor` | speedup |
+|---:|---:|---:|---:|
+| 64 B | 862-915 ns | 203-252 ns | 3.6-4.3x |
+| 256 B | 1.1-1.6 us | 405-881 ns | 1.8-2.8x |
+| 1 KiB | 2.6-5.1 us | 1.9-4.4 us | 1.15-1.4x |
+| 4 KiB | 7.6-17 us | 7.4-17 us | 1.0x |
+
+The 8 KB copy still makes a 64 B message twice as slow as
+`RatioCompressor`'s without a dict. Probing the dict table read-only, as
+`DictCompressor` does, would skip it, at the cost of another search loop.
+
 ### C lz4's HC levels and MID
 
 C lz4's HC API (`LZ4_compress_HC`) maps its level to one of three searches

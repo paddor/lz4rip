@@ -1,9 +1,10 @@
-//! Ratio profile: `compress_ratio`, `RatioCompressor`, and
-//! `FrameEncoder::ratio_profile`.
+//! Ratio profile: `compress_ratio`, `RatioCompressor`, `RatioDictCompressor`
+//! and `FrameEncoder::ratio_profile`. Its output is plain LZ4: lz4rip's
+//! decoders and C lz4 decode it.
 
 use lz4rip::block::{
-    RatioCompressor, compress_into, compress_ratio, compress_ratio_into, decompress,
-    get_maximum_output_size,
+    RatioCompressor, RatioDictCompressor, compress_into, compress_ratio, compress_ratio_into,
+    decompress, decompress_into_with_dict, get_maximum_output_size,
 };
 
 /// Pseudo-random words from a skewed vocabulary: text-like data where a
@@ -125,13 +126,105 @@ fn smaller_than_default_on_text() {
 #[cfg(not(all(target_arch = "arm", target_os = "linux", target_env = "gnu")))]
 #[test]
 fn c_lz4_decodes_ratio_blocks() {
+    let mut comp = RatioCompressor::new();
     for &len in SIZES {
-        let input = words(len, len as u64 + 3);
-        let compressed = compress_ratio(&input);
-        let mut out = vec![0u8; len];
-        let n = lzzzz::lz4::decompress(&compressed, &mut out).unwrap();
-        assert_eq!(n, len);
-        assert_eq!(out, input, "len {len}");
+        for input in [words(len, len as u64 + 3), noise(len, len as u64 + 4)] {
+            for compressed in [compress_ratio(&input), comp.compress(&input)] {
+                let mut out = vec![0u8; len];
+                let n = lzzzz::lz4::decompress(&compressed, &mut out).unwrap();
+                assert_eq!(n, len);
+                assert_eq!(out, input, "len {len}");
+            }
+        }
+    }
+}
+
+/// Dicts of every size class: ignored (under 4 bytes), small, and over the
+/// 64 KiB window.
+const DICT_SIZES: &[usize] = &[0, 3, 4, 100, 2_000, 30_000, 70_000];
+
+#[test]
+fn dict_compressor_roundtrips() {
+    for &dict_len in DICT_SIZES {
+        let dict = words(dict_len, 21);
+        let mut comp = RatioDictCompressor::new(&dict);
+        for &len in SIZES {
+            for input in [words(len, len as u64 + 5), noise(len, len as u64 + 6)] {
+                let compressed = comp.compress(&input);
+                let mut out = vec![0u8; get_maximum_output_size(len)];
+                let n = comp.compress_into(&input, &mut out).unwrap();
+                assert_eq!(out[..n], compressed[..], "dict {dict_len}, len {len}");
+                let mut back = vec![0u8; len];
+                let n = decompress_into_with_dict(&compressed, &mut back, &dict).unwrap();
+                assert_eq!(n, len);
+                assert_eq!(back, input, "dict {dict_len}, len {len}");
+            }
+        }
+    }
+}
+
+#[cfg(not(all(target_arch = "arm", target_os = "linux", target_env = "gnu")))]
+#[test]
+fn c_lz4_decodes_ratio_dict_blocks() {
+    for &dict_len in DICT_SIZES {
+        let dict = words(dict_len, 22);
+        let mut comp = RatioDictCompressor::new(&dict);
+        for &len in SIZES {
+            let input = words(len, len as u64 + 7);
+            let compressed = comp.compress(&input);
+            let mut out = vec![0u8; len];
+            let n = lzzzz::lz4::decompress_with_dict(&compressed, &mut out, &dict).unwrap();
+            assert_eq!(n, len);
+            assert_eq!(out, input, "dict {dict_len}, len {len}");
+        }
+    }
+}
+
+/// The compressor's output equals the per-call ratio path with the same
+/// dict, which hashes the dict for each input.
+#[test]
+fn dict_compressor_matches_per_call_path() {
+    use lz4rip_core::SliceSink;
+    use lz4rip_encode::compress_ratio_into_sink_with_dict;
+    for &dict_len in DICT_SIZES {
+        let dict = words(dict_len, 23);
+        let mut comp = RatioDictCompressor::new(&dict);
+        for i in 0..200u64 {
+            let len = [0, 13, 64, 300, 1500, 2100, 4000, 9000, 65_000, 70_000][i as usize % 10];
+            let input = if i % 3 == 0 {
+                noise(len, i)
+            } else {
+                words(len, i)
+            };
+            let mut want = vec![0u8; get_maximum_output_size(len)];
+            let n = compress_ratio_into_sink_with_dict::<true>(
+                &input,
+                &mut SliceSink::new(&mut want, 0),
+                &dict,
+            )
+            .unwrap();
+            assert_eq!(
+                comp.compress(&input),
+                want[..n],
+                "dict {dict_len}, call {i}"
+            );
+        }
+    }
+}
+
+#[test]
+fn dict_compressor_uses_the_dict() {
+    let dict = words(4_000, 24);
+    let mut with_dict = RatioDictCompressor::new(&dict);
+    let mut without = RatioCompressor::new();
+    for (start, len) in [(0, 200), (1_000, 600), (2_500, 1_400)] {
+        let input = &dict[start..start + len];
+        let small = with_dict.compress(input).len();
+        let plain = without.compress(input).len();
+        assert!(
+            small * 4 < plain,
+            "len {len}: {small} with dict, {plain} without"
+        );
     }
 }
 
