@@ -1,6 +1,6 @@
 {
   "name": "@paddor/lz4rip",
-  "version": "0.2.26",
+  "version": "0.2.27",
   "description": "Pure Rust LZ4 block and frame codec compiled to WebAssembly. Compress and decompress with optional dictionary support.",
   "license": "MIT",
   "type": "module",
