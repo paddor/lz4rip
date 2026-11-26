@@ -137,7 +137,9 @@ fn cover_select(samples: &[&[u8]], dict_size: usize) -> Vec<u8> {
         }
     }
 
-    let k = dict_size / 4;
+    // A segment holds at least one d-mer, as COVER's `k >= d`. Below 32 bytes, segments are
+    // one d-mer each, and the dict is cut to `dict_size` below.
+    let k = (dict_size / 4).max(D);
     if concat.len() < k {
         return concat;
     }
@@ -245,5 +247,28 @@ mod tests {
         let mut trainer = DictTrainer::new(2048);
         trainer.add_sample(b"hello world");
         assert!(trainer.train().is_empty());
+    }
+
+    #[test]
+    fn small_dict_sizes_train_within_their_size() {
+        let text = b"the quick brown fox jumps over the lazy dog, the quick brown fox ";
+        for size in 0..=64 {
+            let mut trainer = DictTrainer::new(size);
+            let len = size.min(24);
+            for i in 0..20 {
+                if len >= MINMATCH {
+                    trainer.add_sample(&text[i..i + len]);
+                }
+            }
+            let dict = trainer.train();
+            assert!(
+                dict.len() <= size,
+                "size {size}: dict of {} bytes",
+                dict.len()
+            );
+            if len >= D {
+                assert!(!dict.is_empty(), "size {size}: empty dict");
+            }
+        }
     }
 }
