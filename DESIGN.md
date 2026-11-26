@@ -384,6 +384,66 @@ the block API's C lz4 settings: 0.3% larger geomean, up to 5% on reymont and
 nci. Whole-file streams (64 KiB blocks, independent and linked) and frames
 of flushed 200 B messages did not change.
 
+### Frame buffers
+
+The encoder and decoder allocate their buffers as a frame's data needs them.
+They used to reserve whole blocks when a frame started, however small the
+frame: an encoder 64 KiB of input and 72 KiB of output buffer, a decoder
+64 KiB each (192 KiB of output when linked), for 64 KiB blocks.
+
+- Encoder input (`src`): during a frame's first block it doubles, from at
+  least 1 KiB (`MIN_SRC_CAPACITY`), as serde writes a field or a byte at a
+  time. A second block makes the frame a stream, and `src` takes its whole
+  limit: one block, or two blocks and the window when linked. Output
+  (`dst`): the bound of each block.
+- Decoder: during the first block, each buffer takes what the block needs,
+  or its whole limit from half of it on (`fill_up`). Blocks before a frame's
+  last fill the block size, so a nearly full block takes all of it rather
+  than growing again at the next block. From the second block, or from the
+  first when the frame declares more content than one block, buffers take
+  their limit at once. A buffer with nothing to keep (an old compressed
+  block, a failed first decode) is replaced instead of reallocated, which
+  would copy the dead bytes.
+- `read_to_end` trusts a declared content size for up to 16x the output
+  decoded so far, and for all of it once that is within 16x again
+  (`RESERVE_EXPANSION`). A false header costs at most 256x what decoded. It
+  used to reserve up to 128 MiB at the first block. A 33 MB frame of 64 KiB
+  blocks takes two allocations, the second copying 1 MiB, and ends with
+  exactly its size.
+
+With glibc, the old reservations cost more than memory. A free that leaves
+more than 128 KiB (`M_TRIM_THRESHOLD`) at the top of the heap trims it, so a
+process that made an encoder or decoder per small frame grew and trimmed its
+heap once or twice per frame, and page-faulted the regrown pages. C lz4's
+decoder avoids this by accident: its 192 KiB buffer is mmapped, and freeing
+it raises glibc's thresholds. Two more glibc effects showed at 64 KiB
+values. The encoder frees its table last: it is allocated last and sits at
+the heap top, and freed first, above the still allocated buffers, it made
+glibc trim twice per frame. And `calloc` left the table to the OS's zero
+pages (see [Hash tables](#hash-tables)).
+
+Measured on x86_64 (i7-8700B, one core, glibc), geomean change from 0.12.8.
+"New process" is foyer's value path (an 8-byte length, then the value, ratio
+profile, a new encoder and decoder per value) on 2 MiB of 6 Silesia files,
+one process per case. "Warm" is a benchmark loop with a new encoder and
+decoder per frame, default profile:
+
+| Frame | 256 B | 1 KiB | 4 KiB | 16 KiB | 64 KiB | 256 KiB |
+|---|---:|---:|---:|---:|---:|---:|
+| compress, new process | -47% | -73% | -85% | -62% | -3% | 0% |
+| decode, new process | -15% | -9% | -87% | -76% | -22% | +4% |
+| compress, warm | -8% | -6% | -2% | -3% | +1% | |
+| decode, warm | -17% | -14% | -2% | -1% | -1% | |
+
+256 KiB frames decode 1-6% slower in a new process with nearly the same
+instructions; the CPU's 4K-aliasing count, which follows where the buffers
+land, moved with it. Values serde writes a byte at a time (`Vec<u8>` through
+bincode) compress 3-4% slower at 1 KiB and 64 KiB, from the growth check in
+each `write` and one more allocation, and 33% faster at 4 KiB; rows of
+fields within 1-3%.
+Whole-file streams changed by -0.2% (worst +1.9%), and `read_to_end` of
+10-51 MB frames by at most 0.7%.
+
 ## Crate split
 
 Four crates: `lz4rip` (facade: re-exports, frame format), `lz4rip-core`

@@ -38,6 +38,8 @@ enum CompressionTable {
 }
 
 impl CompressionTable {
+    /// NOTE: with the ratio profile, a frame's second block makes a 64 KB
+    /// table. Kept: it serves every later block of the frame.
     fn new(ratio: bool) -> Self {
         if ratio {
             Self::Ratio(RatioTable::new())
@@ -120,14 +122,16 @@ pub struct FrameEncoder<W: io::Write> {
     ext_dict_offset: usize,
     ext_dict_len: usize,
     src_stream_offset: usize,
-    /// Made by the first block that needs it. A frame of one small
-    /// independent block never does.
-    compression_table: Option<CompressionTable>,
     ratio: bool,
     w: W,
     content_hasher: XxHash32,
     content_len: u64,
     dst: Vec<u8>,
+    /// Made by the first block that needs it. A frame of one small
+    /// independent block never does. Declared after the buffers, so it is
+    /// freed after them: it is allocated last, so it sits at the heap top,
+    /// and freeing it first made glibc trim the heap twice per frame.
+    compression_table: Option<CompressionTable>,
     is_frame_open: bool,
     failed: bool,
     data_to_frame_written: bool,
@@ -135,18 +139,40 @@ pub struct FrameEncoder<W: io::Write> {
     dict: Vec<u8>,
 }
 
+/// The least `src` takes when it grows. Serde writes a field or a byte at a
+/// time, and from nothing, `src` would grow ten times for a 1 KiB message.
+const MIN_SRC_CAPACITY: usize = 1024;
+
 impl<W: io::Write> FrameEncoder<W> {
-    fn init(&mut self) {
+    /// The most bytes `src` holds: one block, or with linked blocks two
+    /// blocks and the window before them.
+    fn src_limit(&self) -> usize {
         let max_block_size = self.frame_info.block_size.get_size();
-        let src_size = if self.frame_info.block_mode == BlockMode::Linked {
+        if self.frame_info.block_mode == BlockMode::Linked {
             max_block_size * 2 + WINDOW_SIZE
         } else {
             max_block_size
+        }
+    }
+
+    /// Grows `src` to hold `end` bytes. During a frame's first block it
+    /// doubles from what the data needs, so a frame of one small message
+    /// allocates little. A later block makes the frame a stream, so `src`
+    /// then takes its whole limit at once.
+    #[cold]
+    #[inline(never)]
+    fn grow_src(&mut self, end: usize) {
+        let limit = self.src_limit();
+        debug_assert!(end <= limit);
+        let capacity = if self.content_len == 0 {
+            (self.src.capacity() * 2)
+                .max(MIN_SRC_CAPACITY)
+                .min(limit)
+                .max(end)
+        } else {
+            limit
         };
-        self.src
-            .reserve(src_size.saturating_sub(self.src.capacity()));
-        self.dst
-            .reserve(get_maximum_output_size(max_block_size).saturating_sub(self.dst.capacity()));
+        self.src.reserve_exact(capacity - self.src.len());
     }
 
     /// Returns a wrapper around `self` that will finish the stream on drop.
@@ -304,7 +330,6 @@ impl<W: io::Write> FrameEncoder<W> {
         if self.frame_info.block_size == BlockSize::Auto {
             self.frame_info.block_size = BlockSize::from_buf_length(buf_len);
         }
-        self.init();
         let mut frame_info_buffer = [0u8; MAX_FRAME_INFO_SIZE];
         let size = self.frame_info.write(&mut frame_info_buffer)?;
         self.w.write_all(&frame_info_buffer[..size])?;
@@ -447,7 +472,6 @@ impl<W: io::Write> FrameEncoder<W> {
         self.src_start += src.len();
         debug_assert_eq!(self.src_start, self.src_end);
         if self.frame_info.block_mode == BlockMode::Linked {
-            debug_assert_eq!(self.src.capacity(), max_block_size * 2 + WINDOW_SIZE);
             if self.src_start >= max_block_size + WINDOW_SIZE {
                 self.ext_dict_offset = self.src_end - WINDOW_SIZE;
                 self.ext_dict_len = WINDOW_SIZE;
@@ -472,7 +496,6 @@ impl<W: io::Write> FrameEncoder<W> {
             );
         } else {
             debug_assert_eq!(self.ext_dict_len, 0);
-            debug_assert_eq!(self.src.capacity(), max_block_size);
             self.src_start = 0;
             self.src_end = 0;
             #[cfg(target_pointer_width = "32")]
@@ -483,7 +506,7 @@ impl<W: io::Write> FrameEncoder<W> {
             }
         }
         debug_assert!(self.src_start <= self.src_end);
-        debug_assert!(self.src_start + max_block_size <= self.src.capacity());
+        debug_assert!(self.src_start + max_block_size <= self.src_limit());
         Ok(())
     }
 }
@@ -509,6 +532,12 @@ impl<W: io::Write> io::Write for FrameEncoder<W> {
             }
 
             let fill_len = max_fill_len.min(buf.len());
+            // NOTE: this check costs writers of a byte at a time (serde's
+            // `Vec<u8>`) 3-4% at 1 KiB and 64 KiB. Kept: reserving the whole
+            // block up front cost small frames far more.
+            if self.src_end + fill_len > self.src.capacity() {
+                self.grow_src(self.src_end + fill_len);
+            }
             vec_copy_overwriting(&mut self.src, self.src_end, &buf[..fill_len]);
             buf = &buf[fill_len..];
             self.src_end += fill_len;
