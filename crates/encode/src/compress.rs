@@ -762,6 +762,9 @@ pub fn compress_into_sink_with_dict<const USE_DICT: bool>(
     if USE_DICT && dict_data.len() < MINMATCH {
         return compress_into_sink_with_dict::<false>(input, output, b"");
     }
+    // NOTE: a one-shot call makes its table per call (8 KB here, up to 64 KB
+    // with the ratio profile). Kept: the reusable compressors
+    // (`CompressorRef`, `DictCompressorRef`, `RatioCompressor`) are for loops.
     if dict_data.len() + input.len() < u16::MAX as usize {
         let mut dict: HashTableU32U16 = HashTableU32U16::new();
         init_dict(&mut dict, &mut dict_data);
@@ -950,18 +953,50 @@ pub(crate) fn init_dict<T: HashTable>(dict: &mut T, dict_data: &mut &[u8]) {
     }
 }
 
-/// Returns the maximum output size of the compressed data.
-/// Can be used to preallocate capacity on the output vector.
+/// Returns the maximum output size of the compressed data: C lz4's
+/// `LZ4_compressBound`, `input_len + input_len / 255 + 16`. Use it to size
+/// the output buffer.
 ///
-/// Returns `usize::MAX` if the result would overflow (e.g. on 32-bit with >3.9 GB input).
+/// Returns `usize::MAX` if the result would overflow (on 32-bit, inputs near
+/// 4 GiB).
 #[must_use]
 #[inline]
 pub const fn get_maximum_output_size(input_len: usize) -> usize {
-    let raw = 16u64 + 4 + (input_len as u64 * 110 / 100);
+    let raw = input_len as u64 + input_len as u64 / 255 + 16;
     if raw > usize::MAX as u64 {
         usize::MAX
     } else {
         raw as usize
+    }
+}
+
+/// Spare capacity a returned `Vec` may keep. A result is allocated for the
+/// worst case and often holds much less, so a caller that keeps many
+/// results would hold that memory; from this much spare capacity the result
+/// gives it back. Smaller results skip the reallocation.
+#[cfg(feature = "alloc")]
+const VEC_SPARE_LIMIT: usize = 4 * 1024;
+
+/// Truncates `out`, a zeroed buffer of `max` bytes, to its `len` written
+/// bytes and returns it, giving back spare capacity from [`VEC_SPARE_LIMIT`]
+/// on. It tests the two lengths, not the `Vec`: reading its fields back after
+/// the compression made 1 KiB `compress` calls 6% slower.
+#[cfg(feature = "alloc")]
+#[inline]
+pub(crate) fn finish_vec(mut out: Vec<u8>, max: usize, len: usize) -> Vec<u8> {
+    out.truncate(len);
+    if max - len >= VEC_SPARE_LIMIT {
+        shrink(&mut out);
+    }
+    out
+}
+
+#[cfg(feature = "alloc")]
+#[cold]
+#[inline(never)]
+fn shrink(v: &mut Vec<u8>) {
+    if v.capacity() - v.len() >= VEC_SPARE_LIMIT {
+        v.shrink_to_fit();
     }
 }
 
@@ -997,9 +1032,7 @@ pub fn compress(input: &[u8]) -> Vec<u8> {
     let compressed_len =
         compress_into_sink_with_dict::<false>(input, &mut SliceSink::new(&mut compressed, 0), b"")
             .unwrap();
-    compressed.truncate(compressed_len);
-
-    compressed
+    finish_vec(compressed, max_compressed_size, compressed_len)
 }
 
 /// Compress all bytes of `input` into `output` with the ratio profile.
@@ -1028,10 +1061,10 @@ pub fn compress_ratio_into(input: &[u8], output: &mut [u8]) -> Result<usize, Com
 #[must_use]
 #[cfg(feature = "alloc")]
 pub fn compress_ratio(input: &[u8]) -> Vec<u8> {
-    let mut compressed = vec![0u8; get_maximum_output_size(input.len())];
+    let max = get_maximum_output_size(input.len());
+    let mut compressed = vec![0u8; max];
     let len = compress_ratio_into(input, &mut compressed).unwrap();
-    compressed.truncate(len);
-    compressed
+    finish_vec(compressed, max, len)
 }
 
 /// A reusable no-dict block compressor with `N` hash-table entries.
@@ -1094,9 +1127,7 @@ impl<const N: usize> CompressorRefN<N> {
         let max_compressed = get_maximum_output_size(input.len());
         let mut compressed = vec![0u8; max_compressed];
         let compressed_len = self.compress_into(input, &mut compressed).unwrap();
-        compressed.truncate(compressed_len);
-
-        compressed
+        finish_vec(compressed, max_compressed, compressed_len)
     }
 }
 
@@ -1189,9 +1220,7 @@ impl<'a, const N: usize> DictCompressorRefN<'a, N> {
         let max_compressed = get_maximum_output_size(input.len());
         let mut compressed = vec![0u8; max_compressed];
         let compressed_len = self.compress_into(input, &mut compressed).unwrap();
-        compressed.truncate(compressed_len);
-
-        compressed
+        finish_vec(compressed, max_compressed, compressed_len)
     }
 }
 
@@ -1238,7 +1267,8 @@ pub(crate) fn compress_dict_tables<const N: usize>(
     } else {
         // dict + input >= 64 KB: positions overflow u16, so use a u32 table sized
         // to this compressor's `N` (honors the const-generic knob instead of
-        // allocating a standard 8 KB table).
+        // allocating a standard 8 KB table). NOTE: it is made per call, under
+        // 0.5% of a call this size, so it is not kept across calls.
         let mut u32_table = HashTableU32::<N>::new();
         let mut dict_data = dict;
         init_dict(&mut u32_table, &mut dict_data);

@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `block::get_maximum_output_size` returns C lz4's `LZ4_compressBound`,
+  `n + n / 255 + 16`, instead of `1.1 * n + 20`. Buffers sized with it are up
+  to 9% smaller, and every compressor accepts them. Output is unchanged. The
+  WASM package's `compressBound` follows at its next release.
+- `block::compress`, `block::compress_ratio`, the compressors' `compress`,
+  `block::decompress` and `Decompressor::decompress` give back spare
+  capacity of 4 KiB or more. They allocate for the worst case: a message
+  that compresses 30x kept 30x its size, and a 256 B message decoded with a
+  maximum size of 1 MiB kept about 60 KiB. The reallocation costs that
+  decode 3%. Smaller spares stay, so other small messages pay nothing.
+- Hash tables on the heap are zeroed by writing instead of with `calloc`. On
+  fresh memory, `calloc` left the zeroing to the OS, and as the compressor
+  reads each entry before writing it, each page faulted twice: a frame
+  encoder for 64 KiB values compressed 10% slower when its table grew the
+  heap.
+- `DictTrainer::train` takes about a third of the memory: 2.4 MB instead of
+  7.0 MB above the samples for a 64 KB dictionary from 512 KB of samples,
+  and runs 7% faster. Dictionaries are unchanged.
+
 ## [0.12.8] - 2026-11-26
 
 ### Changed

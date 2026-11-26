@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `get_maximum_output_size` returns C lz4's `LZ4_compressBound`,
+  `n + n / 255 + 16`, instead of `1.1 * n + 20`. Buffers sized with it are up
+  to 9% smaller, and every compressor accepts them. Output is unchanged.
+- `compress`, `compress_ratio` and the compressors' `compress` give back
+  spare capacity of 4 KiB or more. They allocate for incompressible input,
+  so a result that compresses well kept up to the input's size in spare
+  capacity. Smaller spares stay, to skip a reallocation per small message.
+- Heap hash tables are zeroed by writing instead of with `calloc`. On fresh
+  memory, `calloc` left the zeroing to the OS, and as the compressor reads
+  each entry before writing it, each page faulted twice.
+- `DictTrainer::train` takes about a third of the memory: 2.4 MB instead of
+  7.0 MB above the samples for a 64 KB dictionary from 512 KB of samples,
+  and runs 7% faster. It scores segments with a sliding sum instead of an
+  array of prefix sums (8 bytes per sample byte, made again for each
+  segment), and moves the samples into one buffer of the exact size,
+  freeing each as it goes. Dictionaries are unchanged.
+
 ## [0.10.17] - 2026-11-26
 
 ### Changed

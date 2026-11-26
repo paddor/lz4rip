@@ -533,6 +533,34 @@ fn copy_from_dict(
     Ok(dict_match_length)
 }
 
+/// Spare capacity a returned `Vec` may keep. `uncompressed_size` is often
+/// an upper bound, and a caller that keeps many results would hold the
+/// spare memory; from this much, the result gives it back. Smaller results
+/// skip the reallocation.
+#[cfg(feature = "alloc")]
+const VEC_SPARE_LIMIT: usize = 4 * 1024;
+
+/// Gives back the spare capacity of `v`, a new `Vec` that took at most
+/// `max_size` bytes and holds `len`, from [`VEC_SPARE_LIMIT`] on. It tests
+/// the two lengths, not the `Vec`: reading its fields back after the decode
+/// made 256 B `decompress` calls 10% slower.
+#[cfg(feature = "alloc")]
+#[inline]
+fn shrink_spare(v: &mut Vec<u8>, max_size: usize, len: usize) {
+    if max_size - len >= VEC_SPARE_LIMIT {
+        shrink(v);
+    }
+}
+
+#[cfg(feature = "alloc")]
+#[cold]
+#[inline(never)]
+fn shrink(v: &mut Vec<u8>) {
+    if v.capacity() - v.len() >= VEC_SPARE_LIMIT {
+        v.shrink_to_fit();
+    }
+}
+
 /// Append zeroed bytes for a large `max_size`, capped at what `input_len`
 /// bytes can decode to. Callers often read `max_size` from an untrusted
 /// header. The cap cannot change the result: no length in the input can
@@ -555,6 +583,10 @@ fn grow_large_output(output: &mut Vec<u8>, input_len: usize, max_size: usize) {
 }
 
 /// Decompress into zeroed new bytes of `output`, then truncate.
+///
+/// NOTE: it zeroes `max_size` bytes (below [`LARGE_OUTPUT`]) even when fewer
+/// decode, as safe code decodes only into initialized memory. It does not
+/// give back spare capacity: the caller owns `output` and often reuses it.
 ///
 /// Always inline: the size branch otherwise stops LLVM from inlining this
 /// into callers with several decode calls, up to 13% slower on small blocks.
@@ -614,7 +646,8 @@ pub fn decompress_append(
 #[inline]
 pub fn decompress(input: &[u8], uncompressed_size: usize) -> Result<Vec<u8>, DecompressError> {
     let mut decompressed = Vec::new();
-    decompress_append(input, &mut decompressed, uncompressed_size)?;
+    let len = decompress_append(input, &mut decompressed, uncompressed_size)?;
+    shrink_spare(&mut decompressed, uncompressed_size, len);
     Ok(decompressed)
 }
 
@@ -665,7 +698,8 @@ impl<'a> DecompressorRef<'a> {
         uncompressed_size: usize,
     ) -> Result<Vec<u8>, DecompressError> {
         let mut decompressed = Vec::new();
-        self.decompress_append(input, &mut decompressed, uncompressed_size)?;
+        let len = self.decompress_append(input, &mut decompressed, uncompressed_size)?;
+        shrink_spare(&mut decompressed, uncompressed_size, len);
         Ok(decompressed)
     }
 
