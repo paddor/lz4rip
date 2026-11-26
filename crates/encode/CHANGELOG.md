@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.17] - 2026-11-26
+
 ### Changed
 
 - `RatioCompressor` makes its 64 KB table on its first input above 4 KiB,
