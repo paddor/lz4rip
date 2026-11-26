@@ -168,9 +168,10 @@ impl<const N: usize> DictCompressorN<N> {
 /// A reusable no-dict block compressor with the ratio profile.
 ///
 /// Output equals [`compress_ratio_into`](crate::compress_ratio_into)'s:
-/// smaller than [`Compressor`]'s, at slower compression. It owns two tables
-/// (8 KB and 64 KB). Inputs up to 256 B reuse the small one across calls;
-/// larger inputs clear a table per call.
+/// smaller than [`Compressor`]'s, at slower compression. It owns an 8 KB
+/// table, and a 64 KB one from its first input above 4 KiB. Inputs up to
+/// 256 B reuse the small one across calls; larger inputs clear a table per
+/// call.
 ///
 /// # Example
 /// ```
@@ -185,7 +186,8 @@ pub struct RatioCompressor {
     small: RatioSmallTable,
     /// Where the next small input's positions start in `small`.
     small_offset: usize,
-    large: RatioTable,
+    /// Made by the first input above 4 KiB.
+    large: Option<RatioTable>,
 }
 
 impl fmt::Debug for RatioCompressor {
@@ -207,7 +209,7 @@ impl RatioCompressor {
         RatioCompressor {
             small: RatioSmallTable::new(),
             small_offset: 1,
-            large: RatioTable::new(),
+            large: None,
         }
     }
 

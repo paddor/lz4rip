@@ -887,12 +887,13 @@ fn compress_ratio_epoch<S: Sink>(
 /// Compress `input` with the ratio profile using caller-owned tables.
 /// Shared by [`RatioCompressor`](crate::RatioCompressor); output equals
 /// [`compress_ratio_into`]. `small_offset` is where the next small input's
-/// positions start in `small`.
+/// positions start in `small`. `large` is made by the first input above
+/// `RATIO_SMALL_LIMIT`.
 #[cfg(feature = "alloc")]
 pub(crate) fn compress_ratio_tables(
     small: &mut RatioSmallTable,
     small_offset: &mut usize,
-    large: &mut RatioTable,
+    large: &mut Option<RatioTable>,
     input: &[u8],
     output: &mut [u8],
 ) -> Result<usize, CompressError> {
@@ -915,16 +916,24 @@ pub(crate) fn compress_ratio_tables(
         compress_core::<_, false, false, false, true, RATIO_SKIP, false, _>(
             input, 0, &mut sink, small, b"", 0,
         )
-    } else if input.len() < u16::MAX as usize {
-        large.clear();
-        compress_core::<_, false, false, false, true, RATIO_SKIP, true, _>(
-            input, 0, &mut sink, large, b"", 0,
-        )
     } else {
-        large.clear();
-        compress_core::<_, false, false, false, false, RATIO_SKIP, true, _>(
-            input, 0, &mut sink, large, b"", 0,
-        )
+        // A new table is clear already.
+        let large = match large {
+            Some(table) => {
+                table.clear();
+                table
+            }
+            None => large.insert(RatioTable::new()),
+        };
+        if input.len() < u16::MAX as usize {
+            compress_core::<_, false, false, false, true, RATIO_SKIP, true, _>(
+                input, 0, &mut sink, large, b"", 0,
+            )
+        } else {
+            compress_core::<_, false, false, false, false, RATIO_SKIP, true, _>(
+                input, 0, &mut sink, large, b"", 0,
+            )
+        }
     }
 }
 
