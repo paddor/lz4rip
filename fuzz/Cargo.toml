@@ -109,3 +109,9 @@ name = "fuzz_decoder_reuse"
 path = "fuzz_targets/fuzz_decoder_reuse.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "fuzz_frame_read_to_end"
+path = "fuzz_targets/fuzz_frame_read_to_end.rs"
+test = false
+doc = false
