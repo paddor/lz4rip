@@ -33,7 +33,9 @@ fn vec_sink_for_compression(
 /// before copying its final literal run (see [`Sink::STOP_IF_NOT_SMALLER`]).
 /// On incompressible input that run is the whole block. Only for blocks that
 /// compress from position 0 of their input: independent ones and a frame's
-/// first block.
+/// first block, in the default profile: in the ratio profile it made
+/// compressible blocks 2-6% slower (numaflow, fat LTO), so those keep
+/// `SliceSink`.
 struct BlockSink<'a>(SliceSink<'a>);
 
 impl Sink for BlockSink<'_> {
@@ -428,11 +430,10 @@ impl<W: io::Write> FrameEncoder<W> {
         let independent = self.frame_info.block_mode == BlockMode::Independent;
         let compress_result = if !self.dict.is_empty() && (independent || first_frame_block) {
             debug_assert_eq!(self.ext_dict_len, 0);
-            let sink = &mut BlockSink(sink);
             if self.ratio {
-                compress_ratio_into_sink_with_dict::<true>(src, sink, &self.dict)
+                compress_ratio_into_sink_with_dict::<true>(src, &mut { sink }, &self.dict)
             } else {
-                compress_into_sink_with_dict::<true>(src, sink, &self.dict)
+                compress_into_sink_with_dict::<true>(src, &mut BlockSink(sink), &self.dict)
             }
         } else if independent
             && first_frame_block
@@ -444,11 +445,10 @@ impl<W: io::Write> FrameEncoder<W> {
             // more matches, and a frame of one block allocates no table of
             // its own. Later blocks share one table, which they need not
             // clear.
-            let sink = &mut BlockSink(sink);
             if self.ratio {
-                compress_ratio_into_sink_with_dict::<false>(src, sink, b"")
+                compress_ratio_into_sink_with_dict::<false>(src, &mut { sink }, b"")
             } else {
-                compress_into_sink_with_dict::<false>(src, sink, b"")
+                compress_into_sink_with_dict::<false>(src, &mut BlockSink(sink), b"")
             }
         } else if self.ext_dict_len != 0 {
             debug_assert_eq!(self.frame_info.block_mode, BlockMode::Linked);
@@ -472,7 +472,7 @@ impl<W: io::Write> FrameEncoder<W> {
             let table = self
                 .compression_table
                 .get_or_insert_with(|| CompressionTable::new(ratio));
-            if start == 0 {
+            if start == 0 && !ratio {
                 let sink = &mut BlockSink(sink);
                 match table {
                     CompressionTable::Fast(t) => {
