@@ -700,8 +700,8 @@ fn read_to_end_keeps_no_bytes_of_a_failed_block() {
 }
 
 /// With no declared content size, a block decodes into `read_to_end`'s
-/// buffer within a guessed limit. The buffer gives back what is past twice
-/// its output, and keeps what the caller reserved.
+/// buffer within a guessed limit: at most 8x its compressed length, or the
+/// block size. Capacity the caller reserved is used as it is.
 #[test]
 fn read_to_end_capacity_follows_its_output() {
     use lz4rip::frame::{FrameDecoder, FrameEncoder};
@@ -716,7 +716,12 @@ fn read_to_end_capacity_follows_its_output() {
         let mut out = Vec::new();
         FrameDecoder::new(&frame[..]).read_to_end(&mut out).unwrap();
         assert_eq!(out, data[..len]);
-        assert!(out.capacity() <= 2 * len, "{len}: {}", out.capacity());
+        let block = frame.len() - 7 - 4 - 4;
+        assert!(
+            out.capacity() <= (8 * block).max(len),
+            "{len}: {}",
+            out.capacity()
+        );
         let mut out = Vec::with_capacity(1 << 20);
         FrameDecoder::new(&frame[..]).read_to_end(&mut out).unwrap();
         assert_eq!(out.capacity(), 1 << 20);

@@ -743,7 +743,11 @@ impl<R: io::Read> io::Read for FrameDecoder<R> {
 
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
         let start = buf.len();
-        let capacity = buf.capacity();
+        // NOTE: with no declared content size, a block decodes within a
+        // guessed limit (`first_limit`), so `buf` can keep up to 8x a
+        // block's compressed length, at most the block size, in spare
+        // capacity. Kept: shrinking it at the end made 1 MiB frames 3.7x
+        // slower to decode (glibc trimmed and refaulted the heap each call).
         // Where the frame being decoded starts in `buf`, when its header was
         // read here and so all of its blocks were decoded there.
         let mut frame_start = None;
@@ -764,17 +768,7 @@ impl<R: io::Read> io::Read for FrameDecoder<R> {
             // frame that a `read` started: their history is in `dst`.
             let result = match self.current_frame_info {
                 None => match self.read_frame_info() {
-                    Ok(0) => {
-                        // A block of a frame with no declared size decodes
-                        // within a guessed limit, which can leave several
-                        // times the output in capacity. Return what is past
-                        // twice the output, as a growing `Vec` keeps, but
-                        // nothing the caller reserved.
-                        if buf.capacity() > capacity && buf.capacity() / 2 > buf.len() {
-                            buf.shrink_to(capacity.max(buf.len()));
-                        }
-                        return Ok(buf.len() - start);
-                    }
+                    Ok(0) => return Ok(buf.len() - start),
                     Ok(_) => {
                         frame_start = Some(buf.len());
                         continue;
