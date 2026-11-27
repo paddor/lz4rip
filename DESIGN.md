@@ -205,6 +205,15 @@ That needs `#[inline(always)]` on `decompress_append_internal`. With only
 `#[inline]`, the branch stopped LLVM from inlining it into callers with
 several decode calls, which made small blocks up to 13% slower.
 
+A block that is one literal-only sequence, as C lz4 and lz4rip write
+incompressible input, skips the zero fill: its literals are appended. A new
+`Vec` is allocated with `Vec::with_capacity`, not grown with `reserve_exact`
+(its generic grow path cost 5-8 ns per call). Near the end of a block, where
+the wildcopies have no headroom, literals and matches up to 32 B take
+`slice_copy` (two overlapping fixed-size copies) instead of a `memcpy`
+call. On qdrant payload values through `decompress`: 149 B incompressible
+25% faster, 122 B JSON 13% faster.
+
 `HashTable` and `decompress_internal` are crate-private. The doc-hidden
 `compress_into_sink_with_table` expects a table from the same compression
 stream. A foreign table reads only inside the buffers, but can produce invalid

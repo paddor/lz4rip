@@ -8,6 +8,8 @@
 //! its destination repeats the pattern like the byte-by-byte copy would,
 //! provided the offset is at least the chunk size.
 
+use lz4rip_core::slice_copy;
+
 use crate::decompress::SHORT_MATCH_MAX;
 
 /// Chunk size of short match copies. A chunked copy is correct for offsets of
@@ -170,6 +172,10 @@ pub(crate) fn wild_copy_match_short_offset(
 }
 
 /// Copy exactly `len` bytes from `src[src_pos..]` to `dst[*dst_pos..]`.
+///
+/// Short copies (up to 32 bytes) take two overlapping fixed-size copies
+/// (`slice_copy`) instead of a `memcpy` call. They are the literals near the
+/// end of a block, where the wildcopy has no headroom.
 #[inline(always)]
 pub(crate) fn copy_from_src(
     src: &[u8],
@@ -179,7 +185,7 @@ pub(crate) fn copy_from_src(
     len: usize,
 ) {
     let d = *dst_pos;
-    dst[d..d + len].copy_from_slice(&src[src_pos..src_pos + len]);
+    slice_copy(&src[src_pos..src_pos + len], &mut dst[d..d + len]);
     *dst_pos += len;
 }
 
@@ -294,10 +300,11 @@ pub(crate) fn wild_copy_match_32(buf: &mut [u8], src: usize, dst_pos: &mut usize
 }
 
 /// Non-overlapping copy of `len` bytes within `buf` (`src + len <= *dst_pos`).
+/// Short copies avoid the `memcpy` call, as in [`copy_from_src`].
 #[inline(always)]
 pub(crate) fn copy_within_nonoverlap(buf: &mut [u8], src: usize, dst_pos: &mut usize, len: usize) {
     debug_assert!(src + len <= *dst_pos);
     let (history, out) = buf.split_at_mut(*dst_pos);
-    out[..len].copy_from_slice(&history[src..src + len]);
+    slice_copy(&history[src..src + len], &mut out[..len]);
     *dst_pos += len;
 }
