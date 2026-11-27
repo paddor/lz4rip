@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+## [0.10.19] - 2026-11-27
+
+### Changed
+
+- With a sink whose `STOP_IF_NOT_SMALLER` is set, the compressor returns
+  `OutputTooSmall` before copying a block's final literal run when the
+  block would not shrink. The frame encoder uses it to store such blocks
+  raw without the copy. Other sinks compile to the same instructions.
+- A kept `Compressor` clears its table for inputs over 512 B when the last
+  such input saved at least 1/32 of its bytes, instead of reusing it for
+  every input up to 1 KiB: on a partly filled table, the check for entries
+  from this call mispredicts. Rotating 1 KiB inputs compress 8% faster;
+  incompressible streams keep the reuse. Output at 513 B-1 KiB changes by
+  -0.8% to +0.5%.
+
+## [0.10.18] - 2026-11-26
+
 ### Added
 
 - `RatioDictCompressor`: the ratio profile with a dictionary, hashed once
