@@ -9,6 +9,15 @@ use crate::fastcpy::slice_copy;
 /// buffer length. The decompressor asserts this at entry but cannot guard
 /// against mid-call violations from concurrent access.
 pub trait Sink {
+    /// When true, the compressor gives up on a block whose output would not
+    /// come out smaller than its input. It returns
+    /// [`CompressError::OutputTooSmall`](crate::CompressError::OutputTooSmall)
+    /// instead of writing the final literal run, which on incompressible
+    /// input is the whole block. For callers that store such blocks
+    /// uncompressed, as the LZ4 frame format does, the run would be copied
+    /// for nothing. Checked once, before the final literal run.
+    const STOP_IF_NOT_SMALLER: bool = false;
+
     /// Pushes a byte to the end of the Sink.
     fn push(&mut self, byte: u8);
 

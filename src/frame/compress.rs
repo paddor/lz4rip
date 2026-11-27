@@ -5,9 +5,7 @@ use std::{
 };
 use twox_hash::XxHash32;
 
-#[cfg(target_pointer_width = "32")]
-use lz4rip_core::CompressError;
-use lz4rip_core::{SliceSink, WINDOW_SIZE};
+use lz4rip_core::{CompressError, Sink, SliceSink, WINDOW_SIZE};
 use lz4rip_encode::{
     HashTableU32, RatioTable, compress_into_sink_with_dict, compress_into_sink_with_table,
     compress_ratio_into_sink_with_dict, compress_ratio_into_sink_with_table,
@@ -25,9 +23,54 @@ fn vec_sink_for_compression(
     offset: usize,
     pos: usize,
     required_capacity: usize,
-) -> SliceSink<'_> {
+) -> BlockSink<'_> {
     vec.resize(offset + required_capacity, 0);
-    SliceSink::new(&mut vec[offset..], pos)
+    BlockSink(SliceSink::new(&mut vec[offset..], pos))
+}
+
+/// The sink a block compresses into. A block that would not come out
+/// smaller than its input is stored uncompressed, so the compressor stops
+/// before copying its final literal run (see [`Sink::STOP_IF_NOT_SMALLER`]).
+/// On incompressible input that run is the whole block.
+struct BlockSink<'a>(SliceSink<'a>);
+
+impl Sink for BlockSink<'_> {
+    const STOP_IF_NOT_SMALLER: bool = true;
+
+    #[inline]
+    fn push(&mut self, byte: u8) {
+        self.0.push(byte);
+    }
+
+    #[inline]
+    fn pos(&self) -> usize {
+        self.0.pos()
+    }
+
+    #[inline]
+    fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+
+    #[inline]
+    fn extend_from_slice(&mut self, data: &[u8]) {
+        self.0.extend_from_slice(data);
+    }
+
+    #[inline]
+    fn extend_from_slice_wild(&mut self, data: &[u8], copy_len: usize) {
+        self.0.extend_from_slice_wild(data, copy_len);
+    }
+
+    #[inline]
+    fn extend_from_within_overlapping(&mut self, start: usize, num_bytes: usize) {
+        self.0.extend_from_within_overlapping(start, num_bytes);
+    }
+
+    #[inline]
+    fn output_mut_with_pos(&mut self) -> (&mut [u8], &mut usize) {
+        self.0.output_mut_with_pos()
+    }
 }
 
 /// The encoder's hash table for blocks that need one (see `write_block`):
@@ -438,11 +481,16 @@ impl<W: io::Write> FrameEncoder<W> {
             }
         };
 
-        let (block_info, block_data) = match compress_result.map_err(Error::CompressionError)? {
-            comp_len if comp_len < src.len() => {
+        // `OutputTooSmall`: the block would not come out smaller (see
+        // `BlockSink`). `dst` always holds the largest output.
+        let (block_info, block_data) = match compress_result {
+            Ok(comp_len) if comp_len < src.len() => {
                 (BlockInfo::Compressed(comp_len as _), &self.dst[..comp_len])
             }
-            _ => (BlockInfo::Uncompressed(src.len() as _), src),
+            Ok(_) | Err(CompressError::OutputTooSmall) => {
+                (BlockInfo::Uncompressed(src.len() as _), src)
+            }
+            Err(e) => return Err(Error::CompressionError(e).into()),
         };
 
         if self.frame_info.block_mode == BlockMode::Linked

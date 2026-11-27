@@ -296,6 +296,20 @@ fn handle_last_literals(rest: &mut [u8], input: &[u8], start: usize) -> usize {
     put_slice(rest, &input[start..]).len()
 }
 
+/// Whether the final literal run from `start` makes the block at least as
+/// long as its input: `written` bytes so far, input `input[input_pos..]`.
+/// For [`Sink::STOP_IF_NOT_SMALLER`].
+#[cold]
+fn not_smaller(written: usize, input: &[u8], input_pos: usize, start: usize) -> bool {
+    let lit_len = input.len() - start;
+    let token_and_len = 1 + if lit_len >= 0xF {
+        (lit_len - 0xF) / 0xFF + 1
+    } else {
+        0
+    };
+    written + token_and_len + lit_len >= input.len() - input_pos
+}
+
 /// Mark the bytes up to `rest_len` written: `output` held `total` bytes
 /// after `start`. Returns the number written.
 #[inline(always)]
@@ -456,6 +470,11 @@ pub(crate) fn compress_core<
             let next_cur = cur + step;
 
             if next_cur > end_pos_check + 1 {
+                if S::STOP_IF_NOT_SMALLER
+                    && not_smaller(out_total - rest.len(), input, input_pos, literal_start)
+                {
+                    return Err(CompressError::OutputTooSmall);
+                }
                 let left = handle_last_literals(rest, input, literal_start);
                 return Ok(finish_output(out_pos, out_start, out_total, left));
             }
