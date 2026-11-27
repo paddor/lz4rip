@@ -2,6 +2,47 @@
 
 ## [Unreleased]
 
+## [0.12.10] - 2026-11-27
+
+### Added
+
+- `frame::FrameDecoder::stop_at_frame_end()`: at each frame's end mark,
+  `read` returns 0 and `fill_buf` an empty slice, as lz4_flex's decoder
+  does, and the next read decodes the next frame. Formats that store one
+  frame per record, such as WARC files, need it to find where each frame
+  ends. The default is unchanged: concatenated frames read as one stream.
+
+### Changed
+
+- `frame::FrameDecoder::read_to_end` decodes blocks, and reads raw blocks,
+  straight into the caller's `Vec` instead of the decoder's buffer plus a
+  copy. Linked blocks take their history from the frame's earlier output
+  in that `Vec`. A block that fails leaves the `Vec` as it was. RocketMQ
+  message bodies decode 7-14% faster (random 16 KiB bodies 999 to 482 ns),
+  Numaflow messages up to 19%.
+- `frame::FrameEncoder` stores a block that does not shrink without first
+  copying its final literal run, the whole block on incompressible input.
+  Frames are byte-identical. RocketMQ random bodies compress 15-23% faster.
+- `block::decompress` and `Decompressor::decompress` append a block that is
+  one literal-only sequence, as incompressible input gives, without zero
+  filling or calling the decoder, and allocate with `Vec::with_capacity`.
+  Qdrant's 149 B payload values decode 32% faster, and `decompress(input,
+  1 MB)` of a 4 KiB incompressible block takes 0.4 µs instead of 25 µs.
+- A kept `block::Compressor` clears its table for inputs over 512 B when
+  the last such input saved at least 1/32 of its bytes, instead of reusing
+  it for every input up to 1 KiB. Each probe of a reused table branches on
+  whether its entry is from this call, and once a compressible input has
+  filled part of the table that branch mispredicts. Rotating 1 KiB inputs
+  compress 8% faster (Qdrant's 880 B JSON payloads 15%), and a kept
+  `Compressor` is faster than `compress_into` at every size from 64 B to
+  4 KiB. Incompressible streams keep the reuse. One input compressed over
+  and over at 768 B-1 KiB is up to 2.3x slower, still faster than
+  `compress_into`. Output at 513 B-1 KiB changes by -0.8% to +0.5%.
+- `lz4rip-core` 0.7.0: `Sink` gains the associated const
+  `STOP_IF_NOT_SMALLER` (default `false`), which the frame encoder's early
+  stop uses. `Sink` is no longer dyn compatible; `lz4rip`'s API does not
+  change.
+
 ## [0.12.9] - 2026-11-26
 
 ### Added
