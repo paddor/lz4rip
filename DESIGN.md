@@ -44,6 +44,19 @@ sets memory and the hash shift. It must be a power of two and at least
   inputs clear it: on a stream of different messages, stale entries cost
   2-8 KB inputs 50-70% (text) and 10-25% (XML, records) more than the clear.
   Incompressible input of that size loses 7-26% to the clear.
+  The cost is the stale test: a branch on whether the entry is from this
+  call, which the predictor cannot learn once the call has filled part of
+  the table. On 64 rotating 896 B slices of `dickens`, reuse had 4x the
+  branch misses of a cleared table and took 34% longer. Compressible inputs
+  fill the table fastest, so inputs over 512 B
+  (`EPOCH_COMPRESSIBLE_THRESHOLD`) reuse it only while the last input over
+  512 B saved less than 1/32 of its bytes, and clear it otherwise. On
+  rotating 640 B-1 KiB slices, reuse took 5-35% longer than the clear on
+  XML, source, text, tar and 845 B JSON rows (Qdrant payloads), and the clear
+  took 25-60% longer on incompressible data (`x-ray`, `sao`, `osdb`). A
+  branch-free stale test (stale entries fail the byte compare) removed the
+  extra misses but ran 50% more instructions: 57% slower at 256 B and 2%
+  slower at 896 B.
 - **Dict, dict + input < 64 KB**: a main table for this input, probed first,
   plus a read-only pristine dict table. Inputs up to 128 B probe only the
   pristine table.

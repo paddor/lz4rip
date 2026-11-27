@@ -241,6 +241,40 @@ fn compressor_ref_epoch_reuse() {
     }
 }
 
+/// A reused `Compressor` picks table reuse or a clear for 512 B-1 KiB inputs
+/// by how well the previous such input compressed. Alternate compressible
+/// and incompressible messages around both limits so every switch happens.
+#[test]
+fn compressor_reuse_follows_compressibility() {
+    use lz4rip::block::{Compressor, CompressorN, decompress};
+
+    let mut x = 0x9E37_79B9u32;
+    let noise: Vec<u8> = (0..1100)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            x as u8
+        })
+        .collect();
+    let text: Vec<u8> = b"{\"id\":17,\"name\":\"pocket tee\",\"colour\":\"dark blue\"},"
+        .iter()
+        .copied()
+        .cycle()
+        .take(1100)
+        .collect();
+    let mut comp = Compressor::new();
+    let mut tiny = CompressorN::<256>::new();
+    for round in 0..300 {
+        let len = [400, 512, 513, 700, 1000, 1024, 1025, 1100][round % 8];
+        let src = if (round / 3) % 2 == 0 { &text } else { &noise };
+        let input = &src[round % 50..][..len.min(src.len() - round % 50)];
+        for out in [comp.compress(input), tiny.compress(input)] {
+            assert_eq!(decompress(&out, input.len()).unwrap(), input);
+        }
+    }
+}
+
 /// CompressorRef with dict: exercise the u16 boundary fallback.
 /// When dict.len() + input.len() >= u16::MAX, CompressorRef::compress_into
 /// falls back from compress_with_dict_table to compress_internal.
