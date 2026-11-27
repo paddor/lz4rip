@@ -1,9 +1,4 @@
-use std::{
-    fmt,
-    hash::Hasher,
-    io::{self, BufRead},
-    mem::size_of,
-};
+use std::{fmt, hash::Hasher, io, mem::size_of};
 use twox_hash::XxHash32;
 
 use super::Error;
@@ -163,6 +158,37 @@ fn reserve_output(
         wanted
     } else {
         trusted.max(block_len)
+    };
+    buf.reserve_exact(reserve);
+}
+
+/// Reserves `buf` for a block decoded straight into it, of at most `limit`
+/// bytes. In a frame that declares its content size, it also reserves the
+/// rest of the frame, as [`reserve_output`] does, trusting the declared size
+/// as far as the `decoded` bytes before this block prove it. `allowed` caps
+/// it at the output limit left.
+fn reserve_block(
+    buf: &mut Vec<u8>,
+    limit: usize,
+    frame_info: &FrameInfo,
+    decoded: u64,
+    allowed: usize,
+) {
+    if buf.capacity() - buf.len() >= limit {
+        return;
+    }
+    let Some(declared) = frame_info.content_size else {
+        buf.reserve(limit);
+        return;
+    };
+    let rest = usize::try_from(declared.saturating_sub(decoded)).unwrap_or(usize::MAX);
+    let proven = usize::try_from(decoded).unwrap_or(usize::MAX);
+    let wanted = rest.min(allowed).max(limit);
+    let trusted = proven.saturating_mul(RESERVE_EXPANSION);
+    let reserve = if trusted.saturating_mul(RESERVE_EXPANSION) >= wanted {
+        wanted
+    } else {
+        trusted.max(limit)
     };
     buf.reserve_exact(reserve);
 }
@@ -362,6 +388,75 @@ impl<R: io::Read> FrameDecoder<R> {
         Ok(())
     }
 
+    /// Reads the next block header.
+    fn read_block_info(&mut self) -> io::Result<BlockInfo> {
+        let mut buffer = [0u8; 4];
+        self.r.read_exact(&mut buffer)?;
+        Ok(BlockInfo::read(&buffer)?)
+    }
+
+    /// Reads a compressed block of `len` bytes into `src[..len]` and checks
+    /// its checksum.
+    fn read_compressed(&mut self, frame_info: &FrameInfo, len: usize) -> io::Result<()> {
+        if len > frame_info.block_size.get_size() {
+            return Err(Error::BlockTooBig.into());
+        }
+        let content_len = self.content_len;
+        self.r
+            .read_exact(vec_resize_and_get_mut(&mut self.src, 0, len, |end| {
+                src_capacity(frame_info, content_len, end)
+            }))?;
+        if frame_info.block_checksums {
+            let expected_checksum = Self::read_checksum(&mut self.r)?;
+            Self::check_block_checksum(&self.src[..len], expected_checksum)?;
+        }
+        Ok(())
+    }
+
+    /// The first decode limit for the compressed block in `src[..len]`, with
+    /// `zeroed` bytes of output already zeroed.
+    ///
+    /// Decode at most the bytes the frame still declares, so a small frame
+    /// zeroes no more than its content. With no declared size, guess from
+    /// the block's length (`FIRST_LIMIT_EXPANSION`). A block that fails
+    /// within the first limit is decoded again with the full block limit, so
+    /// errors, including the length reported at the end mark, match an
+    /// unlimited decode. NOTE: a declared size is trusted for one block of
+    /// zeroing (at most 4 MiB) before the data proves it. Kept: a smaller
+    /// first limit would decode compressible blocks twice.
+    fn first_limit(&self, frame_info: &FrameInfo, len: usize, zeroed: usize) -> usize {
+        let max_block_size = frame_info.block_size.get_size();
+        match frame_info.content_size {
+            Some(size) => {
+                usize::try_from(size.saturating_sub(self.content_len)).unwrap_or(usize::MAX)
+            }
+            None => fill_up(len.saturating_mul(FIRST_LIMIT_EXPANSION), max_block_size).max(zeroed),
+        }
+        .min(max_block_size)
+    }
+
+    /// Checks a frame's end mark: its declared length and content checksum.
+    fn end_frame(&mut self, frame_info: &FrameInfo) -> io::Result<()> {
+        if let Some(expected) = frame_info.content_size
+            && self.content_len != expected
+        {
+            return Err(Error::ContentLengthError {
+                expected,
+                actual: self.content_len,
+            }
+            .into());
+        }
+        if frame_info.content_checksum {
+            let expected_checksum = Self::read_checksum(&mut self.r)?;
+            let calc_checksum = self.content_hasher.finish() as u32;
+            if calc_checksum != expected_checksum {
+                return Err(Error::ContentChecksumError.into());
+            }
+        }
+        self.current_frame_info = None;
+        Ok(())
+    }
+
     fn read_block(&mut self) -> io::Result<usize> {
         debug_assert_eq!(self.dst_start, self.dst_end);
         let frame_info = *self
@@ -392,11 +487,7 @@ impl<R: io::Read> FrameDecoder<R> {
             self.dst_end = 0;
         }
 
-        let block_info = {
-            let mut buffer = [0u8; 4];
-            self.r.read_exact(&mut buffer)?;
-            BlockInfo::read(&buffer)?
-        };
+        let block_info = self.read_block_info()?;
         match block_info {
             BlockInfo::Uncompressed(len) => {
                 let len = len as usize;
@@ -425,37 +516,12 @@ impl<R: io::Read> FrameDecoder<R> {
             }
             BlockInfo::Compressed(len) => {
                 let len = len as usize;
-                if len > max_block_size {
-                    return Err(Error::BlockTooBig.into());
-                }
-                let content_len = self.content_len;
-                self.r
-                    .read_exact(vec_resize_and_get_mut(&mut self.src, 0, len, |end| {
-                        src_capacity(&frame_info, content_len, end)
-                    }))?;
-                if frame_info.block_checksums {
-                    let expected_checksum = Self::read_checksum(&mut self.r)?;
-                    Self::check_block_checksum(&self.src[..len], expected_checksum)?;
-                }
-
-                // Decode at most the bytes the frame still declares, so a
-                // small frame zeroes no more than its content. With no
-                // declared size, guess from the block's length
-                // (`FIRST_LIMIT_EXPANSION`). A block that fails within the
-                // first limit is decoded again with the full block limit, so
-                // errors, including the length reported at the end mark,
-                // match an unlimited decode. NOTE: a declared size is trusted
-                // for one block of zeroing (at most 4 MiB) before the data
-                // proves it. Kept: a smaller first limit would decode
-                // compressible blocks twice.
-                let mut limit = match frame_info.content_size {
-                    Some(size) => {
-                        usize::try_from(size.saturating_sub(self.content_len)).unwrap_or(usize::MAX)
-                    }
-                    None => fill_up(len.saturating_mul(FIRST_LIMIT_EXPANSION), max_block_size)
-                        .max(self.dst.len().saturating_sub(self.dst_start)),
-                }
-                .min(max_block_size);
+                self.read_compressed(&frame_info, len)?;
+                let mut limit = self.first_limit(
+                    &frame_info,
+                    len,
+                    self.dst.len().saturating_sub(self.dst_start),
+                );
                 let decomp_size = loop {
                     match self.decompress_block(len, limit) {
                         Err(_) if limit < max_block_size => limit = max_block_size,
@@ -470,23 +536,7 @@ impl<R: io::Read> FrameDecoder<R> {
             }
 
             BlockInfo::EndMark => {
-                if let Some(expected) = frame_info.content_size
-                    && self.content_len != expected
-                {
-                    return Err(Error::ContentLengthError {
-                        expected,
-                        actual: self.content_len,
-                    }
-                    .into());
-                }
-                if frame_info.content_checksum {
-                    let expected_checksum = Self::read_checksum(&mut self.r)?;
-                    let calc_checksum = self.content_hasher.finish() as u32;
-                    if calc_checksum != expected_checksum {
-                        return Err(Error::ContentChecksumError.into());
-                    }
-                }
-                self.current_frame_info = None;
+                self.end_frame(&frame_info)?;
                 return Ok(0);
             }
         }
@@ -532,6 +582,128 @@ impl<R: io::Read> FrameDecoder<R> {
         }
     }
 
+    /// Decodes the frame's next block to the end of `buf`, as
+    /// [`read_block`](Self::read_block) decodes it into `dst`, from where
+    /// `read_to_end` would copy it. A linked block refers to the frame's
+    /// earlier blocks, so it needs `frame_start`: where the frame starts in
+    /// `buf`, when all of it was decoded there. A block that fails leaves
+    /// `buf` as it was.
+    fn read_block_into(
+        &mut self,
+        buf: &mut Vec<u8>,
+        frame_start: Option<usize>,
+    ) -> io::Result<usize> {
+        debug_assert_eq!(self.dst_start, self.dst_end);
+        let frame_info = *self
+            .current_frame_info
+            .as_ref()
+            .ok_or_else(|| io::Error::other("no frame header has been read"))?;
+        let pos = buf.len();
+        let allowed = self.max_output.saturating_sub(self.bytes_output);
+        let result = match self.read_block_info()? {
+            BlockInfo::Uncompressed(len) => {
+                let len = len as usize;
+                if len > frame_info.block_size.get_size() {
+                    return Err(Error::BlockTooBig.into());
+                }
+                let bytes_output = self.check_output_len(len)?;
+                reserve_block(buf, len, &frame_info, self.content_len, allowed);
+                buf.resize(pos + len, 0);
+                self.r.read_exact(&mut buf[pos..]).and_then(|()| {
+                    if frame_info.block_checksums {
+                        let expected_checksum = Self::read_checksum(&mut self.r)?;
+                        Self::check_block_checksum(&buf[pos..], expected_checksum)?;
+                    }
+                    Ok(bytes_output)
+                })
+            }
+            BlockInfo::Compressed(len) => {
+                let len = len as usize;
+                self.read_compressed(&frame_info, len)?;
+                self.decompress_block_into(&frame_info, len, buf, frame_start)
+                    .map_err(|e| Error::DecompressionError(e).into())
+                    .and_then(|()| self.check_output_len(buf.len() - pos))
+            }
+            BlockInfo::EndMark => {
+                self.end_frame(&frame_info)?;
+                return Ok(0);
+            }
+        };
+        match result {
+            Ok(bytes_output) => self.bytes_output = bytes_output,
+            Err(e) => {
+                buf.truncate(pos);
+                return Err(e);
+            }
+        }
+        let block = &buf[pos..];
+        self.content_len += block.len() as u64;
+        if frame_info.content_checksum {
+            self.content_hasher.write(block);
+        }
+        Ok(block.len())
+    }
+
+    /// Decodes the compressed block in `src[..len]` to the end of `buf` (see
+    /// [`read_block_into`](Self::read_block_into)), with the limits of
+    /// [`read_block`](Self::read_block).
+    fn decompress_block_into(
+        &self,
+        frame_info: &FrameInfo,
+        len: usize,
+        buf: &mut Vec<u8>,
+        frame_start: Option<usize>,
+    ) -> Result<(), DecompressError> {
+        let max_block_size = frame_info.block_size.get_size();
+        let pos = buf.len();
+        let input = &self.src[..len];
+        // The earlier output a block may refer to: the dictionary for an
+        // independent block, and for a linked one the frame's last 64 KiB
+        // and, before the frame, the dictionary.
+        let (history, dict) = match frame_start {
+            Some(start) if frame_info.block_mode == BlockMode::Linked => {
+                let history = start.max(pos.saturating_sub(WINDOW_SIZE));
+                (
+                    history,
+                    if history == start {
+                        &self.dict[..]
+                    } else {
+                        &[]
+                    },
+                )
+            }
+            _ => (pos, &self.dict[..]),
+        };
+        let mut limit = self.first_limit(frame_info, len, 0);
+        let allowed = self.max_output.saturating_sub(self.bytes_output);
+        loop {
+            reserve_block(buf, limit, frame_info, self.content_len, allowed);
+            buf.resize(pos + limit, 0);
+            let sink = &mut SliceSink::new(&mut buf[history..], pos - history);
+            let result = if dict.is_empty() {
+                decompress_into_sink_with_dict::<false>(input, sink, b"")
+            } else {
+                decompress_into_sink_with_dict::<true>(input, sink, dict)
+            };
+            match result {
+                Err(_) if limit < max_block_size => limit = max_block_size,
+                // Lengths from the block start, as from `dst`.
+                Err(DecompressError::OutputTooSmall { expected, actual }) => {
+                    let before = pos - history;
+                    return Err(DecompressError::OutputTooSmall {
+                        expected: expected.saturating_sub(before),
+                        actual: actual.saturating_sub(before),
+                    });
+                }
+                Err(e) => return Err(e),
+                Ok(written) => {
+                    buf.truncate(pos + written);
+                    return Ok(());
+                }
+            }
+        }
+    }
+
     fn read_more(&mut self) -> io::Result<usize> {
         loop {
             if self.current_frame_info.is_none() && self.read_frame_info()? == 0 {
@@ -570,26 +742,57 @@ impl<R: io::Read> io::Read for FrameDecoder<R> {
     }
 
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
-        let mut written = 0;
+        let start = buf.len();
+        let capacity = buf.capacity();
+        // Where the frame being decoded starts in `buf`, when its header was
+        // read here and so all of its blocks were decoded there.
+        let mut frame_start = None;
         loop {
-            match self.fill_buf() {
-                Ok([]) => return Ok(written),
-                Ok(_) => {}
-                Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
+            if self.dst_start < self.dst_end {
+                // A block a `read` or `fill_buf` left.
+                reserve_output(
+                    buf,
+                    self.dst_end - self.dst_start,
+                    self.current_frame_info.and_then(|info| info.content_size),
+                    self.content_len,
+                    self.max_output.saturating_sub(self.bytes_output),
+                );
+                buf.extend_from_slice(&self.dst[self.dst_start..self.dst_end]);
+                self.dst_start = self.dst_end;
             }
-            reserve_output(
-                buf,
-                self.dst_end - self.dst_start,
-                self.current_frame_info.and_then(|info| info.content_size),
-                self.content_len,
-                self.max_output.saturating_sub(self.bytes_output),
-            );
-            let block = &self.dst[self.dst_start..self.dst_end];
-            buf.extend_from_slice(block);
-            let len = block.len();
-            self.consume(len);
-            written += len;
+            // Blocks go straight to `buf`, except the linked blocks of a
+            // frame that a `read` started: their history is in `dst`.
+            let result = match self.current_frame_info {
+                None => match self.read_frame_info() {
+                    Ok(0) => {
+                        // A block of a frame with no declared size decodes
+                        // within a guessed limit, which can leave several
+                        // times the output in capacity. Return what is past
+                        // twice the output, as a growing `Vec` keeps, but
+                        // nothing the caller reserved.
+                        if buf.capacity() > capacity && buf.capacity() / 2 > buf.len() {
+                            buf.shrink_to(capacity.max(buf.len()));
+                        }
+                        return Ok(buf.len() - start);
+                    }
+                    Ok(_) => {
+                        frame_start = Some(buf.len());
+                        continue;
+                    }
+                    Err(e) => Err(e),
+                },
+                Some(info) if info.block_mode == BlockMode::Linked && frame_start.is_none() => {
+                    self.read_block()
+                }
+                Some(_) => self.read_block_into(buf, frame_start),
+            };
+            if let Err(e) = result {
+                // As in `read_more`: the frame's state is unusable.
+                self.current_frame_info = None;
+                if e.kind() != io::ErrorKind::Interrupted {
+                    return Err(e);
+                }
+            }
         }
     }
 }
