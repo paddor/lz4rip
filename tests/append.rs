@@ -1,6 +1,6 @@
 use lz4rip::block::{
-    DecompressError, Decompressor, DecompressorRef, DictCompressor, compress, decompress_append,
-    decompress_into,
+    DecompressError, Decompressor, DecompressorRef, DictCompressor, compress, decompress,
+    decompress_append, decompress_into,
 };
 
 /// Mixes literal runs, runs with periods 1 to 20, and copies of earlier
@@ -166,4 +166,56 @@ fn dict_into_and_append_match_input() {
         Ok(input.len())
     );
     assert_eq!(out, input);
+}
+
+/// A literal-only block, as incompressible input gives, skips the zero fill
+/// on the `Vec` APIs. Results and errors stay those of `decompress_into`.
+#[test]
+fn literal_only_blocks_match_into() {
+    for len in [0usize, 1, 14, 15, 16, 269, 270, 271, 524, 525, 4096] {
+        let data: Vec<u8> = (0..len as u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+            .collect();
+        let mut block = Vec::new();
+        if len < 15 {
+            block.push((len as u8) << 4);
+        } else {
+            block.push(0xF0);
+            let mut rest = len - 15;
+            while rest >= 255 {
+                block.push(255);
+                rest -= 255;
+            }
+            block.push(rest as u8);
+        }
+        block.extend_from_slice(&data);
+        for limit in [len.saturating_sub(1), len, len + 1, 1 << 20] {
+            let mut buf = vec![0u8; limit];
+            let expected = decompress_into(&block, &mut buf).map(|n| buf[..n].to_vec());
+            assert_eq!(
+                decompress(&block, limit),
+                expected,
+                "len {len} limit {limit}"
+            );
+            let dict = Decompressor::with_dict(b"some dictionary");
+            assert_eq!(
+                dict.decompress(&block, limit),
+                expected,
+                "len {len} limit {limit}"
+            );
+            for prefix in [&b""[..], b"prefix"] {
+                let mut out = prefix.to_vec();
+                let result = decompress_append(&block, &mut out, limit);
+                assert_eq!(
+                    result,
+                    expected.as_ref().map(Vec::len).map_err(Clone::clone)
+                );
+                let want = match &expected {
+                    Ok(decoded) => [prefix, decoded].concat(),
+                    Err(_) => prefix.to_vec(),
+                };
+                assert_eq!(out, want, "len {len} limit {limit}");
+            }
+        }
+    }
 }

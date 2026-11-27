@@ -582,11 +582,29 @@ fn grow_large_output(output: &mut Vec<u8>, input_len: usize, max_size: usize) {
     }
 }
 
+/// The literals of a block that is one literal-only sequence, as C lz4
+/// writes incompressible input, if they fit in `max_size`.
+///
+/// The decoder would copy them as they are, so the `Vec` APIs append them
+/// without zeroing `max_size` bytes first. Any other block, valid or not,
+/// returns `None` and takes the decoder, which reports its errors.
+#[cfg(feature = "alloc")]
+#[inline(always)]
+fn literal_only_block(input: &[u8], max_size: usize) -> Option<&[u8]> {
+    let &token = input.first()?;
+    let mut start = TOKEN_LEN;
+    let literal_length = read_literal_length(input, &mut start, token, max_size).ok()?;
+    let literals = input.get(start..)?;
+    (literals.len() == literal_length && literal_length <= max_size).then_some(literals)
+}
+
 /// Decompress into zeroed new bytes of `output`, then truncate.
 ///
 /// NOTE: it zeroes `max_size` bytes (below [`LARGE_OUTPUT`]) even when fewer
-/// decode, as safe code decodes only into initialized memory. It does not
-/// give back spare capacity: the caller owns `output` and often reuses it.
+/// decode, as safe code decodes only into initialized memory. A literal-only
+/// block (incompressible input) skips that: its literals are appended. It
+/// does not give back spare capacity: the caller owns `output` and often
+/// reuses it.
 ///
 /// Always inline: the size branch otherwise stops LLVM from inlining this
 /// into callers with several decode calls, up to 13% slower on small blocks.
@@ -598,11 +616,25 @@ fn decompress_append_internal<const USE_DICT: bool>(
     max_size: usize,
     ext_dict: &[u8],
 ) -> Result<usize, DecompressError> {
+    if let Some(literals) = literal_only_block(input, max_size) {
+        if output.capacity() == 0 {
+            *output = literals.to_vec();
+        } else {
+            output.extend_from_slice(literals);
+        }
+        return Ok(literals.len());
+    }
     let start = output.len();
     if max_size >= LARGE_OUTPUT {
         grow_large_output(output, input.len(), max_size);
     } else {
-        output.reserve_exact(max_size);
+        if output.capacity() == 0 {
+            // A new `Vec` (as `decompress` passes): allocating directly skips
+            // the generic grow path of `reserve_exact`.
+            *output = Vec::with_capacity(max_size);
+        } else {
+            output.reserve_exact(max_size);
+        }
         output.resize(start + max_size, 0);
     }
     let result = decompress_internal::<USE_DICT>(
