@@ -596,3 +596,106 @@ fn first_small_block_matches_the_block_api() {
         }
     }
 }
+
+/// A frame stores a block raw exactly when it would not come out smaller,
+/// and the compressor stops early on such blocks (`Sink::STOP_IF_NOT_SMALLER`).
+/// Inputs are noise with a zero run of growing length, so some blocks land
+/// on each side of the boundary.
+#[test]
+fn blocks_that_do_not_shrink_are_stored_raw() {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut noise = |len: usize| -> Vec<u8> {
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect()
+    };
+    let (mut raw, mut compressed) = (0, 0);
+    for len in [20, 300, 4096, 20_000] {
+        for run in 0..48 {
+            let mut input = noise(len);
+            let at = len / 2;
+            input[at..at + run.min(len - at)].fill(0);
+            for ratio in [false, true] {
+                let enc = lz4rip::frame::FrameEncoder::new(Vec::new());
+                let mut enc = if ratio { enc.ratio_profile() } else { enc };
+                enc.write_all(&input).unwrap();
+                let frame = enc.finish().unwrap();
+                let block = if ratio {
+                    lz4rip::block::compress_ratio(&input)
+                } else {
+                    lz4rip::block::compress(&input)
+                };
+                let header = u32::from_le_bytes(frame[7..11].try_into().unwrap());
+                let size = (header & 0x7FFF_FFFF) as usize;
+                if block.len() >= input.len() {
+                    assert_eq!(header >> 31, 1, "len {len}, run {run}, ratio {ratio}");
+                    assert_eq!(&frame[11..11 + size], &input[..]);
+                    raw += 1;
+                } else {
+                    assert_eq!(header >> 31, 0, "len {len}, run {run}, ratio {ratio}");
+                    assert_eq!(&frame[11..11 + size], &block[..]);
+                    compressed += 1;
+                }
+                assert_eq!(lz4rip_frame_decompress(&frame).unwrap(), input);
+            }
+        }
+    }
+    assert!(
+        raw > 0 && compressed > 0,
+        "raw {raw}, compressed {compressed}"
+    );
+}
+
+/// Linked and dictionary frames that mix raw and compressed blocks decode to
+/// their input.
+#[test]
+fn mixed_raw_and_compressed_blocks_round_trip() {
+    use lz4rip::frame::{BlockMode, FrameDecoder, FrameEncoder, FrameInfo};
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut data = Vec::new();
+    for i in 0..12 {
+        if i % 3 == 0 {
+            data.extend((0..50_000).map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            }));
+        } else {
+            for k in 0..2_000 {
+                data.extend_from_slice(format!("record {k} of part {i}\n").as_bytes());
+            }
+        }
+    }
+    let dict = &data[60_000..64_000];
+    for mode in [BlockMode::Independent, BlockMode::Linked] {
+        for ratio in [false, true] {
+            for with_dict in [false, true] {
+                let info = FrameInfo::new()
+                    .block_mode(mode)
+                    .block_size(BlockSize::Max64KB);
+                let enc = if with_dict {
+                    FrameEncoder::with_dictionary(Vec::new(), dict, 7, Some(info)).unwrap()
+                } else {
+                    FrameEncoder::with_frame_info(info, Vec::new())
+                };
+                let mut enc = if ratio { enc.ratio_profile() } else { enc };
+                enc.write_all(&data).unwrap();
+                let frame = enc.finish().unwrap();
+                let mut out = Vec::new();
+                let mut dec = if with_dict {
+                    FrameDecoder::with_dictionary(&frame[..], dict, 7)
+                } else {
+                    FrameDecoder::new(&frame[..])
+                };
+                dec.read_to_end(&mut out).unwrap();
+                assert!(out == data, "{mode:?}, ratio {ratio}, dict {with_dict}");
+            }
+        }
+    }
+}
