@@ -5,9 +5,7 @@ use std::{
 };
 use twox_hash::XxHash32;
 
-#[cfg(target_pointer_width = "32")]
-use lz4rip_core::CompressError;
-use lz4rip_core::{SliceSink, WINDOW_SIZE};
+use lz4rip_core::{CompressError, Sink, SliceSink, WINDOW_SIZE};
 use lz4rip_encode::{
     HashTableU32, RatioTable, compress_into_sink_with_dict, compress_into_sink_with_table,
     compress_ratio_into_sink_with_dict, compress_ratio_into_sink_with_table,
@@ -28,6 +26,55 @@ fn vec_sink_for_compression(
 ) -> SliceSink<'_> {
     vec.resize(offset + required_capacity, 0);
     SliceSink::new(&mut vec[offset..], pos)
+}
+
+/// The sink a block compresses into. A block that would not come out
+/// smaller than its input is stored uncompressed, so the compressor stops
+/// before copying its final literal run (see [`Sink::STOP_IF_NOT_SMALLER`]).
+/// On incompressible input that run is the whole block. Only for blocks that
+/// compress from position 0 of their input: independent ones and a frame's
+/// first block, in the default profile: in the ratio profile it made
+/// compressible blocks 2-6% slower (numaflow, fat LTO), so those keep
+/// `SliceSink`.
+struct BlockSink<'a>(SliceSink<'a>);
+
+impl Sink for BlockSink<'_> {
+    const STOP_IF_NOT_SMALLER: bool = true;
+
+    #[inline]
+    fn push(&mut self, byte: u8) {
+        self.0.push(byte);
+    }
+
+    #[inline]
+    fn pos(&self) -> usize {
+        self.0.pos()
+    }
+
+    #[inline]
+    fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+
+    #[inline]
+    fn extend_from_slice(&mut self, data: &[u8]) {
+        self.0.extend_from_slice(data);
+    }
+
+    #[inline]
+    fn extend_from_slice_wild(&mut self, data: &[u8], copy_len: usize) {
+        self.0.extend_from_slice_wild(data, copy_len);
+    }
+
+    #[inline]
+    fn extend_from_within_overlapping(&mut self, start: usize, num_bytes: usize) {
+        self.0.extend_from_within_overlapping(start, num_bytes);
+    }
+
+    #[inline]
+    fn output_mut_with_pos(&mut self) -> (&mut [u8], &mut usize) {
+        self.0.output_mut_with_pos()
+    }
 }
 
 /// The encoder's hash table for blocks that need one (see `write_block`):
@@ -378,15 +425,15 @@ impl<W: io::Write> FrameEncoder<W> {
         let dst_required_size = get_maximum_output_size(src.len());
         let first_frame_block = self.content_len == 0;
 
-        let sink = &mut vec_sink_for_compression(&mut self.dst, 0, 0, dst_required_size);
+        let sink = vec_sink_for_compression(&mut self.dst, 0, 0, dst_required_size);
         let ext_dict = &self.src[self.ext_dict_offset..self.ext_dict_offset + self.ext_dict_len];
         let independent = self.frame_info.block_mode == BlockMode::Independent;
         let compress_result = if !self.dict.is_empty() && (independent || first_frame_block) {
             debug_assert_eq!(self.ext_dict_len, 0);
             if self.ratio {
-                compress_ratio_into_sink_with_dict::<true>(src, sink, &self.dict)
+                compress_ratio_into_sink_with_dict::<true>(src, &mut { sink }, &self.dict)
             } else {
-                compress_into_sink_with_dict::<true>(src, sink, &self.dict)
+                compress_into_sink_with_dict::<true>(src, &mut BlockSink(sink), &self.dict)
             }
         } else if independent
             && first_frame_block
@@ -399,14 +446,15 @@ impl<W: io::Write> FrameEncoder<W> {
             // its own. Later blocks share one table, which they need not
             // clear.
             if self.ratio {
-                compress_ratio_into_sink_with_dict::<false>(src, sink, b"")
+                compress_ratio_into_sink_with_dict::<false>(src, &mut { sink }, b"")
             } else {
-                compress_into_sink_with_dict::<false>(src, sink, b"")
+                compress_into_sink_with_dict::<false>(src, &mut BlockSink(sink), b"")
             }
         } else if self.ext_dict_len != 0 {
             debug_assert_eq!(self.frame_info.block_mode, BlockMode::Linked);
             let (start, offset) = (self.src_start, self.src_stream_offset);
             let ratio = self.ratio;
+            let sink = &mut { sink };
             match self
                 .compression_table
                 .get_or_insert_with(|| CompressionTable::new(ratio))
@@ -421,28 +469,50 @@ impl<W: io::Write> FrameEncoder<W> {
         } else {
             let (start, offset) = (self.src_start, self.src_stream_offset);
             let ratio = self.ratio;
-            match self
+            let table = self
                 .compression_table
-                .get_or_insert_with(|| CompressionTable::new(ratio))
-            {
-                CompressionTable::Fast(t) => {
-                    compress_into_sink_with_table::<false, true, false, _>(
-                        input, start, sink, t, b"", offset,
-                    )
+                .get_or_insert_with(|| CompressionTable::new(ratio));
+            if start == 0 && !ratio {
+                let sink = &mut BlockSink(sink);
+                match table {
+                    CompressionTable::Fast(t) => {
+                        compress_into_sink_with_table::<false, true, false, _>(
+                            input, start, sink, t, b"", offset,
+                        )
+                    }
+                    CompressionTable::Ratio(t) => {
+                        compress_ratio_into_sink_with_table::<false, true, _>(
+                            input, start, sink, t, b"", offset,
+                        )
+                    }
                 }
-                CompressionTable::Ratio(t) => {
-                    compress_ratio_into_sink_with_table::<false, true, _>(
-                        input, start, sink, t, b"", offset,
-                    )
+            } else {
+                let sink = &mut { sink };
+                match table {
+                    CompressionTable::Fast(t) => {
+                        compress_into_sink_with_table::<false, true, false, _>(
+                            input, start, sink, t, b"", offset,
+                        )
+                    }
+                    CompressionTable::Ratio(t) => {
+                        compress_ratio_into_sink_with_table::<false, true, _>(
+                            input, start, sink, t, b"", offset,
+                        )
+                    }
                 }
             }
         };
 
-        let (block_info, block_data) = match compress_result.map_err(Error::CompressionError)? {
-            comp_len if comp_len < src.len() => {
+        // `OutputTooSmall`: the block would not come out smaller (see
+        // `BlockSink`). `dst` always holds the largest output.
+        let (block_info, block_data) = match compress_result {
+            Ok(comp_len) if comp_len < src.len() => {
                 (BlockInfo::Compressed(comp_len as _), &self.dst[..comp_len])
             }
-            _ => (BlockInfo::Uncompressed(src.len() as _), src),
+            Ok(_) | Err(CompressError::OutputTooSmall) => {
+                (BlockInfo::Uncompressed(src.len() as _), src)
+            }
+            Err(e) => return Err(Error::CompressionError(e).into()),
         };
 
         if self.frame_info.block_mode == BlockMode::Linked

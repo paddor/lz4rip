@@ -27,10 +27,19 @@ pub use crate::hashtable::{DEFAULT_DICT_ENTRIES, DEFAULT_NODICT_ENTRIES, MIN_ENT
 /// Inputs up to this size reuse the no-dict hash table across calls (epoch-based
 /// table reuse); larger inputs clear it. Independent of table entry count.
 ///
-/// Reuse saves the table clear, which dominates tiny inputs. From 2 KB up a
-/// cleared table is faster on compressible data: a table full of stale
-/// entries costs more than the clear (see DESIGN.md).
+/// Reuse saves the table clear, which dominates tiny inputs. But each probe
+/// then tests whether its entry is from this call, a branch the predictor
+/// misses more often the more of the table the call has filled. From 2 KB up
+/// the clear is faster on compressible data. Compressible inputs fill the
+/// table fastest, so above `EPOCH_COMPRESSIBLE_THRESHOLD` they clear it too
+/// (see DESIGN.md).
 const EPOCH_THRESHOLD: usize = 1024;
+
+/// Inputs above this size reuse the no-dict table only while the last input
+/// above it saved less than 1/32 of its bytes. On compressible 512 B-1 KiB
+/// inputs, reuse took 5-35% longer than the clear; on incompressible ones,
+/// the clear took 25-60% longer.
+const EPOCH_COMPRESSIBLE_THRESHOLD: usize = 512;
 
 /// Skip acceleration: step grows by 1 every `1 << N` consecutive non-matches.
 /// C lz4 uses 6; see DESIGN.md for tradeoff analysis.
@@ -296,6 +305,20 @@ fn handle_last_literals(rest: &mut [u8], input: &[u8], start: usize) -> usize {
     put_slice(rest, &input[start..]).len()
 }
 
+/// Whether the final literal run from `start` makes the block at least as
+/// long as `input`, with `written` bytes so far. For
+/// [`Sink::STOP_IF_NOT_SMALLER`], which compresses from `input_pos` 0.
+#[cold]
+fn not_smaller(written: usize, input: &[u8], start: usize) -> bool {
+    let lit_len = input.len() - start;
+    let token_and_len = 1 + if lit_len >= 0xF {
+        (lit_len - 0xF) / 0xFF + 1
+    } else {
+        0
+    };
+    written + token_and_len + lit_len >= input.len()
+}
+
 /// Mark the bytes up to `rest_len` written: `output` held `total` bytes
 /// after `start`. Returns the number written.
 #[inline(always)]
@@ -394,6 +417,9 @@ pub(crate) fn compress_core<
     if NEAR {
         assert!(ext_dict.len() + input.len() <= MAX_DISTANCE + 1);
     }
+    // `input_pos` is not kept for the test: one more live value in the
+    // search loop cost compressible frame blocks up to 6%.
+    assert!(!S::STOP_IF_NOT_SMALLER || input_pos == 0);
     let input_stream_offset = if HAS_OFFSET { input_stream_offset } else { 0 };
     let (out, out_pos) = output.output_mut_with_pos();
     let out_start = *out_pos;
@@ -456,6 +482,11 @@ pub(crate) fn compress_core<
             let next_cur = cur + step;
 
             if next_cur > end_pos_check + 1 {
+                if S::STOP_IF_NOT_SMALLER
+                    && not_smaller(out_total - rest.len(), input, literal_start)
+                {
+                    return Err(CompressError::OutputTooSmall);
+                }
                 let left = handle_last_literals(rest, input, literal_start);
                 return Ok(finish_output(out_pos, out_start, out_total, left));
             }
@@ -1193,6 +1224,8 @@ pub fn compress_ratio(input: &[u8]) -> Vec<u8> {
 pub struct CompressorRefN<const N: usize = DEFAULT_NODICT_ENTRIES> {
     table: HashTableU32<N>,
     stream_offset: usize,
+    /// The last input above `EPOCH_COMPRESSIBLE_THRESHOLD` compressed.
+    compressible: bool,
 }
 
 /// A reusable no-dict block compressor with the standard 8 KB hash table.
@@ -1211,6 +1244,7 @@ impl<const N: usize> CompressorRefN<N> {
         CompressorRefN {
             table: HashTableU32::<N>::new(),
             stream_offset: 0,
+            compressible: false,
         }
     }
 
@@ -1228,7 +1262,13 @@ impl<const N: usize> CompressorRefN<N> {
         input: &[u8],
         output: &mut [u8],
     ) -> Result<usize, CompressError> {
-        compress_plain_table(&mut self.table, &mut self.stream_offset, input, output)
+        compress_plain_table(
+            &mut self.table,
+            &mut self.stream_offset,
+            &mut self.compressible,
+            input,
+            output,
+        )
     }
 
     /// Compress `input` into a new `Vec<u8>`.
@@ -1395,15 +1435,42 @@ pub(crate) fn compress_dict_tables<const N: usize>(
 
 /// Compress `input` using the plain (no-dict) table with epoch-based reuse.
 /// Shared by [`CompressorRef::compress_into`] and the owning [`Compressor`].
+/// `compressible` records whether the last input above
+/// `EPOCH_COMPRESSIBLE_THRESHOLD` compressed.
 pub(crate) fn compress_plain_table<const N: usize>(
     table: &mut HashTableU32<N>,
     stream_offset: &mut usize,
+    compressible: &mut bool,
     input: &[u8],
     output: &mut [u8],
 ) -> Result<usize, CompressError> {
-    let offset = prepare_plain_table(table, stream_offset, input.len());
+    let len = input.len();
+    let reuse_limit = if *compressible {
+        EPOCH_COMPRESSIBLE_THRESHOLD
+    } else {
+        EPOCH_THRESHOLD
+    };
+    let result = compress_plain_table_with(table, stream_offset, reuse_limit, input, output);
+    if len > EPOCH_COMPRESSIBLE_THRESHOLD
+        && let Ok(n) = result
+    {
+        *compressible = n + len / 32 < len;
+    }
+    result
+}
+
+/// [`compress_plain_table`] reusing the table for inputs up to `reuse_limit`.
+#[inline]
+fn compress_plain_table_with<const N: usize>(
+    table: &mut HashTableU32<N>,
+    stream_offset: &mut usize,
+    reuse_limit: usize,
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<usize, CompressError> {
+    let offset = prepare_plain_table(table, stream_offset, input.len(), reuse_limit);
     if offset > 0 {
-        // Epoch reuse: inputs up to `EPOCH_THRESHOLD`, and entries from
+        // Epoch reuse: inputs up to `reuse_limit`, and entries from
         // earlier calls fail the `input_pos < next_cur` test.
         compress_internal::<_, false, true, false, true, _>(
             input,
@@ -1439,8 +1506,9 @@ fn prepare_plain_table<const N: usize>(
     table: &mut HashTableU32<N>,
     stream_offset: &mut usize,
     input_len: usize,
+    reuse_limit: usize,
 ) -> usize {
-    if input_len > EPOCH_THRESHOLD {
+    if input_len > reuse_limit {
         table.clear();
         *stream_offset = input_len + MAX_DISTANCE + 1;
         return 0;
@@ -1476,6 +1544,43 @@ mod tests {
         ];
         let mut output = [0u8; get_maximum_output_size(20)];
         let _ = compress_into(input, &mut output).unwrap();
+    }
+
+    /// Inputs above `EPOCH_COMPRESSIBLE_THRESHOLD` set the reuse mode; a
+    /// compressible one makes the next such input clear the table.
+    #[test]
+    fn plain_reuse_follows_compressibility() {
+        let text: Vec<u8> = b"key=value, ".iter().copied().cycle().take(800).collect();
+        let mut x = 1u32;
+        let noise: Vec<u8> = (0..800)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                x as u8
+            })
+            .collect();
+        let mut out = [0u8; get_maximum_output_size(800)];
+        let mut comp = CompressorRef::new();
+        let cleared = MAX_DISTANCE + 1 + 800;
+
+        comp.compress_into(&noise, &mut out).unwrap();
+        assert!(!comp.compressible);
+        // Incompressible: the next 800 B input reuses the table.
+        comp.compress_into(&text, &mut out).unwrap();
+        assert!(comp.stream_offset > cleared);
+        assert!(comp.compressible);
+        // Compressible: the next 800 B input clears it.
+        comp.compress_into(&text, &mut out).unwrap();
+        assert_eq!(comp.stream_offset, cleared);
+        // Inputs up to the limit reuse it and keep the mode.
+        comp.compress_into(&noise[..EPOCH_COMPRESSIBLE_THRESHOLD], &mut out)
+            .unwrap();
+        assert!(comp.stream_offset > cleared);
+        assert!(comp.compressible);
+        comp.compress_into(&noise, &mut out).unwrap();
+        assert_eq!(comp.stream_offset, cleared);
+        assert!(!comp.compressible);
     }
 
     #[test]

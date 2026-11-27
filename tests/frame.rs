@@ -744,3 +744,237 @@ fn first_small_block_matches_the_block_api() {
         }
     }
 }
+
+/// A frame stores a block raw exactly when it would not come out smaller,
+/// and the compressor stops early on such blocks (`Sink::STOP_IF_NOT_SMALLER`).
+/// Inputs are noise with a zero run of growing length, so some blocks land
+/// on each side of the boundary.
+#[test]
+fn blocks_that_do_not_shrink_are_stored_raw() {
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut noise = |len: usize| -> Vec<u8> {
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect()
+    };
+    let (mut raw, mut compressed) = (0, 0);
+    for len in [20, 300, 4096, 20_000] {
+        for run in 0..48 {
+            let mut input = noise(len);
+            let at = len / 2;
+            input[at..at + run.min(len - at)].fill(0);
+            for ratio in [false, true] {
+                let enc = lz4rip::frame::FrameEncoder::new(Vec::new());
+                let mut enc = if ratio { enc.ratio_profile() } else { enc };
+                enc.write_all(&input).unwrap();
+                let frame = enc.finish().unwrap();
+                let block = if ratio {
+                    lz4rip::block::compress_ratio(&input)
+                } else {
+                    lz4rip::block::compress(&input)
+                };
+                let header = u32::from_le_bytes(frame[7..11].try_into().unwrap());
+                let size = (header & 0x7FFF_FFFF) as usize;
+                if block.len() >= input.len() {
+                    assert_eq!(header >> 31, 1, "len {len}, run {run}, ratio {ratio}");
+                    assert_eq!(&frame[11..11 + size], &input[..]);
+                    raw += 1;
+                } else {
+                    assert_eq!(header >> 31, 0, "len {len}, run {run}, ratio {ratio}");
+                    assert_eq!(&frame[11..11 + size], &block[..]);
+                    compressed += 1;
+                }
+                assert_eq!(lz4rip_frame_decompress(&frame).unwrap(), input);
+            }
+        }
+    }
+    assert!(
+        raw > 0 && compressed > 0,
+        "raw {raw}, compressed {compressed}"
+    );
+}
+
+/// Linked and dictionary frames that mix raw and compressed blocks decode to
+/// their input.
+#[test]
+fn mixed_raw_and_compressed_blocks_round_trip() {
+    use lz4rip::frame::{BlockMode, FrameDecoder, FrameEncoder, FrameInfo};
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    let mut data = Vec::new();
+    for i in 0..12 {
+        if i % 3 == 0 {
+            data.extend((0..50_000).map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            }));
+        } else {
+            for k in 0..2_000 {
+                data.extend_from_slice(format!("record {k} of part {i}\n").as_bytes());
+            }
+        }
+    }
+    let dict = &data[60_000..64_000];
+    for mode in [BlockMode::Independent, BlockMode::Linked] {
+        for ratio in [false, true] {
+            for with_dict in [false, true] {
+                let info = FrameInfo::new()
+                    .block_mode(mode)
+                    .block_size(BlockSize::Max64KB);
+                let enc = if with_dict {
+                    FrameEncoder::with_dictionary(Vec::new(), dict, 7, Some(info)).unwrap()
+                } else {
+                    FrameEncoder::with_frame_info(info, Vec::new())
+                };
+                let mut enc = if ratio { enc.ratio_profile() } else { enc };
+                enc.write_all(&data).unwrap();
+                let frame = enc.finish().unwrap();
+                let mut out = Vec::new();
+                let mut dec = if with_dict {
+                    FrameDecoder::with_dictionary(&frame[..], dict, 7)
+                } else {
+                    FrameDecoder::new(&frame[..])
+                };
+                dec.read_to_end(&mut out).unwrap();
+                assert!(out == data, "{mode:?}, ratio {ratio}, dict {with_dict}");
+            }
+        }
+    }
+}
+
+/// `read_to_end` decodes blocks straight into its buffer. It returns what
+/// `read` returns, after a partial `read` too, for independent and linked
+/// frames with and without checksums and content size.
+#[test]
+fn read_to_end_matches_read() {
+    use lz4rip::frame::{BlockMode, FrameDecoder, FrameEncoder, FrameInfo};
+    let mut data = Vec::new();
+    for k in 0..20_000 {
+        data.extend_from_slice(format!("record {k} value {}\n", k * 7 % 13).as_bytes());
+    }
+    for mode in [BlockMode::Independent, BlockMode::Linked] {
+        for flags in 0..4 {
+            let info = FrameInfo::new()
+                .block_mode(mode)
+                .block_size(BlockSize::Max64KB)
+                .block_checksums(flags & 1 != 0)
+                .content_checksum(flags & 1 != 0)
+                .content_size((flags & 2 != 0).then_some(data.len() as u64));
+            let mut enc = FrameEncoder::with_frame_info(info, Vec::new());
+            enc.write_all(&data).unwrap();
+            let mut frames = enc.finish().unwrap();
+            // A second frame after the first, read in the same call.
+            frames.extend_from_slice(&frames.clone());
+            let expected = [&data[..], &data[..]].concat();
+            for first in [0, 1, 1000, 65_536, 70_000, 400_000] {
+                let mut dec = FrameDecoder::new(&frames[..]);
+                let mut out = b"prefix".to_vec();
+                let mut head = vec![0; first];
+                dec.read_exact(&mut head).unwrap();
+                out.extend_from_slice(&head);
+                let n = dec.read_to_end(&mut out).unwrap();
+                assert_eq!(n, expected.len() - first);
+                assert!(
+                    out[6..] == expected[..],
+                    "{mode:?}, flags {flags}, first {first}"
+                );
+            }
+        }
+    }
+}
+
+/// A block decoded at the end of `read_to_end`'s buffer cannot refer to the
+/// bytes before it: the caller's, or another frame's.
+#[test]
+fn read_to_end_blocks_do_not_refer_to_earlier_output() {
+    use lz4rip::frame::{BlockMode, FrameDecoder, FrameEncoder, FrameInfo};
+    // A match at offset 1 with no literals before it: valid only after
+    // earlier output.
+    let block = [0x00, 0x01, 0x00, 0x00];
+    for mode in [BlockMode::Independent, BlockMode::Linked] {
+        let info = FrameInfo::new().block_mode(mode);
+        let mut enc = FrameEncoder::with_frame_info(info, Vec::new());
+        enc.write_all(b"hello hello hello").unwrap();
+        let good = enc.finish().unwrap();
+        // Magic, FLG, BD and header checksum, then one bad block.
+        let mut bad = good[..7].to_vec();
+        bad.extend_from_slice(&(block.len() as u32).to_le_bytes());
+        bad.extend_from_slice(&block);
+        bad.extend_from_slice(&[0; 4]);
+        for input in [bad.clone(), [&good[..], &bad[..]].concat()] {
+            let mut out = b"abc".to_vec();
+            let result = FrameDecoder::new(&input[..]).read_to_end(&mut out);
+            assert!(result.is_err(), "{mode:?}");
+            let decoded = if input.len() > bad.len() {
+                &b"hello hello hello"[..]
+            } else {
+                b""
+            };
+            assert_eq!(out, [&b"abc"[..], decoded].concat(), "{mode:?}");
+        }
+    }
+}
+
+/// A block that fails leaves `read_to_end`'s buffer with the blocks before
+/// it, as `read` returns them.
+#[test]
+fn read_to_end_keeps_no_bytes_of_a_failed_block() {
+    use lz4rip::frame::{BlockMode, FrameDecoder, FrameEncoder, FrameInfo};
+    let mut data = Vec::new();
+    for k in 0..12_000 {
+        data.extend_from_slice(format!("line {k}\n").as_bytes());
+    }
+    for mode in [BlockMode::Independent, BlockMode::Linked] {
+        let info = FrameInfo::new()
+            .block_mode(mode)
+            .block_size(BlockSize::Max64KB)
+            .block_checksums(true);
+        let mut enc = FrameEncoder::with_frame_info(info, Vec::new());
+        enc.write_all(&data).unwrap();
+        let mut frame = enc.finish().unwrap();
+        // The second block's checksum.
+        let first = (u32::from_le_bytes(frame[7..11].try_into().unwrap()) & 0x7FFF_FFFF) as usize;
+        let second_at = 7 + 4 + first + 4;
+        let second = (u32::from_le_bytes(frame[second_at..second_at + 4].try_into().unwrap())
+            & 0x7FFF_FFFF) as usize;
+        frame[second_at + 4 + second] ^= 1;
+        let mut out = Vec::new();
+        assert!(FrameDecoder::new(&frame[..]).read_to_end(&mut out).is_err());
+        assert!(out[..] == data[..65_536], "{mode:?}: {} bytes", out.len());
+    }
+}
+
+/// With no declared content size, a block decodes into `read_to_end`'s
+/// buffer within a guessed limit: at most 8x its compressed length, or the
+/// block size. Capacity the caller reserved is used as it is.
+#[test]
+fn read_to_end_capacity_follows_its_output() {
+    use lz4rip::frame::{FrameDecoder, FrameEncoder};
+    let mut data = Vec::new();
+    for k in 0..1_000 {
+        data.extend_from_slice(format!("{{\"id\":{k},\"ok\":true}}").as_bytes());
+    }
+    for len in [100, 4_000, 16_000] {
+        let mut enc = FrameEncoder::new(Vec::new());
+        enc.write_all(&data[..len]).unwrap();
+        let frame = enc.finish().unwrap();
+        let mut out = Vec::new();
+        FrameDecoder::new(&frame[..]).read_to_end(&mut out).unwrap();
+        assert_eq!(out, data[..len]);
+        let block = frame.len() - 7 - 4 - 4;
+        assert!(
+            out.capacity() <= (8 * block).max(len),
+            "{len}: {}",
+            out.capacity()
+        );
+        let mut out = Vec::with_capacity(1 << 20);
+        FrameDecoder::new(&frame[..]).read_to_end(&mut out).unwrap();
+        assert_eq!(out.capacity(), 1 << 20);
+    }
+}

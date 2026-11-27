@@ -189,7 +189,7 @@ fn compressed_output_is_target_independent() {
         ("compress_ratio 4K", (2090, 0x6893_bc7d_3ffc_f386)),
         ("compress_ratio 32K", (15011, 0xbf7e_fca4_6a54_076b)),
         ("compress_ratio 96K", (43868, 0xbbbf_dc65_7183_c9c8)),
-        ("Compressor 8x1K", (5062, 0x034f_e6ef_6b8c_ea2a)),
+        ("Compressor 8x1K", (5023, 0xf9e1_5268_fb15_efbd)),
         ("dict", (2048, 0x490c_2e96_5d2b_e7bf)),
         ("DictCompressor", (33351, 0x869e_798e_207c_12f1)),
         ("frame linked 160K", (74618, 0x5235_69e2_f3e5_810f)),

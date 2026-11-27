@@ -28,14 +28,22 @@ fuzz_target!(|fuzz_data: FuzzData| {
     } else {
         Decompressor::with_dict(&dict).decompress(input, output_size)
     };
-    if let Ok(decomp) = result {
-        for byte in decomp {
-            std::hint::black_box(byte);
-        }
-    }
+    // The Vec API decodes like the into-buffer API (it skips the zero fill
+    // for literal-only blocks).
+    let mut out = vec![0u8; output_size];
+    let into = if dict.is_empty() {
+        decompress_into(input, &mut out)
+    } else {
+        Decompressor::with_dict(&dict).decompress_into(input, &mut out)
+    };
+    assert_eq!(result, into.map(|len| out[..len].to_vec()));
 
     // Into-buffer decompress: must not panic even with exact/tight buffers.
-    for buf_size in [output_size, output_size.saturating_add(1), output_size.saturating_sub(1)] {
+    for buf_size in [
+        output_size,
+        output_size.saturating_add(1),
+        output_size.saturating_sub(1),
+    ] {
         if buf_size == 0 && input.is_empty() {
             continue;
         }

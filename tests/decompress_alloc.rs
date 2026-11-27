@@ -158,3 +158,27 @@ fn highest_expansion_fits() {
         }
     }
 }
+
+#[test]
+fn literal_only_block_allocates_its_literals() {
+    let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+    let data: Vec<u8> = (0..4096)
+        .map(|_| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 32) as u8
+        })
+        .collect();
+    let block = compress(&data);
+    assert_eq!(
+        block.len(),
+        2 + 16 + data.len(),
+        "one literal-only sequence"
+    );
+    for (name, decode) in DECODERS {
+        let (result, largest, _) = requests(|| decode(&block, 1 << 20));
+        assert_eq!(result.unwrap(), data, "{name}");
+        assert_eq!(largest, data.len(), "{name}");
+    }
+}

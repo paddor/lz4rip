@@ -44,6 +44,19 @@ sets memory and the hash shift. It must be a power of two and at least
   inputs clear it: on a stream of different messages, stale entries cost
   2-8 KB inputs 50-70% (text) and 10-25% (XML, records) more than the clear.
   Incompressible input of that size loses 7-26% to the clear.
+  The cost is the stale test: a branch on whether the entry is from this
+  call, which the predictor cannot learn once the call has filled part of
+  the table. On 64 rotating 896 B slices of `dickens`, reuse had 4x the
+  branch misses of a cleared table and took 34% longer. Compressible inputs
+  fill the table fastest, so inputs over 512 B
+  (`EPOCH_COMPRESSIBLE_THRESHOLD`) reuse it only while the last input over
+  512 B saved less than 1/32 of its bytes, and clear it otherwise. On
+  rotating 640 B-1 KiB slices, reuse took 5-35% longer than the clear on
+  XML, source, text, tar and 845 B JSON rows (Qdrant payloads), and the clear
+  took 25-60% longer on incompressible data (`x-ray`, `sao`, `osdb`). A
+  branch-free stale test (stale entries fail the byte compare) removed the
+  extra misses but ran 50% more instructions: 57% slower at 256 B and 2%
+  slower at 896 B.
 - **Dict, dict + input < 64 KB**: a main table for this input, probed first,
   plus a read-only pristine dict table. Inputs up to 128 B probe only the
   pristine table.
@@ -204,6 +217,15 @@ compare: they have little to waste, and `calloc` skips glibc's thread cache.
 That needs `#[inline(always)]` on `decompress_append_internal`. With only
 `#[inline]`, the branch stopped LLVM from inlining it into callers with
 several decode calls, which made small blocks up to 13% slower.
+
+A block that is one literal-only sequence, as C lz4 and lz4rip write
+incompressible input, skips the zero fill: its literals are appended. A new
+`Vec` is allocated with `Vec::with_capacity`, not grown with `reserve_exact`
+(its generic grow path cost 5-8 ns per call). On qdrant payload values
+through `decompress`: 149 B incompressible 31% faster, 122 B JSON 8%
+faster with glibc malloc (unchanged with jemalloc). Short exact copies near the block end through `slice_copy` instead
+of `memcpy` made 122 B blocks another 7% faster, but grew `decompress_loop`
+by 665 B and made 1 MiB of text 5% slower.
 
 `HashTable` and `decompress_internal` are crate-private. The doc-hidden
 `compress_into_sink_with_table` expects a table from the same compression
