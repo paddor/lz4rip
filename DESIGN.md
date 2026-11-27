@@ -209,8 +209,8 @@ A block that is one literal-only sequence, as C lz4 and lz4rip write
 incompressible input, skips the zero fill: its literals are appended. A new
 `Vec` is allocated with `Vec::with_capacity`, not grown with `reserve_exact`
 (its generic grow path cost 5-8 ns per call). On qdrant payload values
-through `decompress`: 149 B incompressible 30% faster, 122 B JSON 6%
-faster. Short exact copies near the block end through `slice_copy` instead
+through `decompress`: 149 B incompressible 31% faster, 122 B JSON 8%
+faster with glibc malloc (unchanged with jemalloc). Short exact copies near the block end through `slice_copy` instead
 of `memcpy` made 122 B blocks another 7% faster, but grew `decompress_loop`
 by 665 B and made 1 MiB of text 5% slower.
 
