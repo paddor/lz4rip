@@ -182,6 +182,9 @@ pub struct FrameDecoderOptions<'a> {
 /// Bytes read will be decompressed according to the [LZ4 frame format](
 /// https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md).
 ///
+/// Concatenated frames read as one stream. To end the stream at each frame
+/// end instead, use [`stop_at_frame_end`](Self::stop_at_frame_end).
+///
 /// After a read error, the decoder abandons the current frame state. The next
 /// read expects a frame header at the reader's current position. Replacing the
 /// reader through [`get_mut`](Self::get_mut) allows decoding a new frame, while
@@ -224,6 +227,7 @@ pub struct FrameDecoder<R: io::Read> {
     expected_dict_id: Option<u32>,
     max_output: usize,
     bytes_output: usize,
+    stop_at_frame_end: bool,
 }
 
 impl<R: io::Read> FrameDecoder<R> {
@@ -244,6 +248,7 @@ impl<R: io::Read> FrameDecoder<R> {
             expected_dict_id: None,
             max_output: usize::MAX,
             bytes_output: 0,
+            stop_at_frame_end: false,
         }
     }
 
@@ -269,6 +274,42 @@ impl<R: io::Read> FrameDecoder<R> {
             dec.max_output = max_output;
         }
         dec
+    }
+
+    /// Ends the stream at each frame end, as `lz4_flex`'s `FrameDecoder`
+    /// does. At a frame's end mark, `read` returns 0 and `fill_buf` an empty
+    /// slice, so `read_to_end` returns one frame. The next read decodes the
+    /// next frame. Without it, concatenated frames read as one stream.
+    ///
+    /// For formats that store one frame per record, such as WARC files, so
+    /// a reader can tell where each frame ends.
+    /// [`FrameDecoderOptions::max_output`] still counts all frames.
+    ///
+    /// ```
+    /// use std::io::{Read, Write};
+    /// use lz4rip::frame::{FrameDecoder, FrameEncoder};
+    ///
+    /// let mut frames = Vec::new();
+    /// for record in [&b"first record"[..], b"second record"] {
+    ///     let mut enc = FrameEncoder::new(Vec::new());
+    ///     enc.write_all(record).unwrap();
+    ///     frames.extend_from_slice(&enc.finish().unwrap());
+    /// }
+    ///
+    /// let mut dec = FrameDecoder::new(&frames[..]).stop_at_frame_end();
+    /// let mut out = Vec::new();
+    /// dec.read_to_end(&mut out).unwrap();
+    /// assert_eq!(out, b"first record");
+    /// out.clear();
+    /// dec.read_to_end(&mut out).unwrap();
+    /// assert_eq!(out, b"second record");
+    /// out.clear();
+    /// assert_eq!(dec.read_to_end(&mut out).unwrap(), 0);
+    /// ```
+    #[must_use]
+    pub fn stop_at_frame_end(mut self) -> Self {
+        self.stop_at_frame_end = true;
+        self
     }
 
     /// Gets a reference to the underlying reader in this decoder.
@@ -549,6 +590,11 @@ impl<R: io::Read> FrameDecoder<R> {
             if read != 0 {
                 return Ok(read);
             }
+            // An end mark clears the frame info, an empty data block does
+            // not.
+            if self.stop_at_frame_end && self.current_frame_info.is_none() {
+                return Ok(0);
+            }
         }
     }
 }
@@ -623,6 +669,7 @@ impl<R: fmt::Debug + io::Read> fmt::Debug for FrameDecoder<R> {
             .field("current_frame_info", &self.current_frame_info)
             .field("max_output", &self.max_output)
             .field("bytes_output", &self.bytes_output)
+            .field("stop_at_frame_end", &self.stop_at_frame_end)
             .finish()
     }
 }

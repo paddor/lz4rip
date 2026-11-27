@@ -233,6 +233,154 @@ fn concatenated_respects_total_limit() {
     assert_eq!(uncompressed.len(), compression1k().len());
 }
 
+/// Frames of `records`, one per record, each with block and content
+/// checksums in `mode`.
+fn frame_per_record(records: &[&[u8]], mode: lz4rip::frame::BlockMode) -> Vec<Vec<u8>> {
+    let info = lz4rip::frame::FrameInfo::new()
+        .block_size(BlockSize::Max64KB)
+        .block_mode(mode)
+        .block_checksums(true)
+        .content_checksum(true);
+    records
+        .iter()
+        .map(|record| lz4rip_frame_compress_with(info, record).unwrap())
+        .collect()
+}
+
+#[test]
+fn stop_at_frame_end_reads_one_frame_per_read_to_end() {
+    use lz4rip::frame::{BlockMode, FrameDecoder};
+
+    // 66 KB spans two blocks; the empty frame reads as empty.
+    let records: [&[u8]; 4] = [compression1k(), b"", compression66json(), compression34k()];
+    for mode in [BlockMode::Independent, BlockMode::Linked] {
+        let frames = frame_per_record(&records, mode);
+        let stream = frames.concat();
+
+        let mut dec = FrameDecoder::new(&stream[..]).stop_at_frame_end();
+        for record in records {
+            let mut output = Vec::new();
+            assert_eq!(dec.read_to_end(&mut output).unwrap(), record.len());
+            assert_eq!(output, record, "{mode:?}");
+        }
+        let mut output = Vec::new();
+        assert_eq!(dec.read_to_end(&mut output).unwrap(), 0);
+        assert_eq!(dec.read(&mut [0; 16]).unwrap(), 0);
+
+        // The default reads every frame in one stream.
+        let mut output = Vec::new();
+        FrameDecoder::new(&stream[..])
+            .read_to_end(&mut output)
+            .unwrap();
+        assert_eq!(output, records.concat(), "{mode:?}");
+    }
+}
+
+#[test]
+fn stop_at_frame_end_leaves_the_reader_at_the_next_frame() {
+    use lz4rip::frame::{BlockMode, FrameDecoder};
+    use std::io::BufRead;
+
+    let records: [&[u8]; 2] = [compression66json(), compression1k()];
+    let frames = frame_per_record(&records, BlockMode::Independent);
+    let stream = frames.concat();
+
+    let mut dec = FrameDecoder::new(&stream[..]).stop_at_frame_end();
+    let mut end = 0;
+    for (&record, frame) in records.iter().zip(&frames) {
+        let mut output = Vec::new();
+        loop {
+            let chunk = dec.fill_buf().unwrap();
+            if chunk.is_empty() {
+                break;
+            }
+            // Small reads, so frame ends fall between reads too.
+            let len = chunk.len().min(1000);
+            output.extend_from_slice(&chunk[..len]);
+            dec.consume(len);
+        }
+        assert_eq!(output, record);
+        // The frame's end mark and content checksum are read, nothing after.
+        end += frame.len();
+        assert_eq!(stream.len() - dec.get_ref().len(), end);
+    }
+    assert!(dec.fill_buf().unwrap().is_empty());
+}
+
+#[test]
+fn stop_at_frame_end_is_not_fooled_by_empty_blocks() {
+    // Empty uncompressed and compressed data blocks end no frame.
+    for empty in [vec![0, 0, 0, 0x80], vec![1, 0, 0, 0, 0]] {
+        let mut enc = lz4rip::frame::FrameEncoder::new(Vec::new());
+        enc.write_all(b"hello").unwrap();
+        let mut frame = enc.finish().unwrap();
+        frame.splice(7..7, empty.iter().copied().cycle().take(empty.len() * 3));
+        let stream = [frame.as_slice(), &frame].concat();
+
+        let mut dec = lz4rip::frame::FrameDecoder::new(&stream[..]).stop_at_frame_end();
+        for _ in 0..2 {
+            let mut output = Vec::new();
+            dec.read_to_end(&mut output).unwrap();
+            assert_eq!(output, b"hello");
+        }
+    }
+}
+
+#[test]
+fn stop_at_frame_end_counts_output_across_frames() {
+    let records: [&[u8]; 2] = [compression1k(), compression34k()];
+    let stream = frame_per_record(&records, lz4rip::frame::BlockMode::Independent).concat();
+    let total = records[0].len() + records[1].len();
+
+    let mut dec = lz4rip::frame::FrameDecoder::with_options(
+        &stream[..],
+        lz4rip::frame::FrameDecoderOptions {
+            max_output: Some(total - 1),
+            ..Default::default()
+        },
+    )
+    .stop_at_frame_end();
+    let mut output = Vec::new();
+    dec.read_to_end(&mut output).unwrap();
+    assert_eq!(output, records[0]);
+    let err = dec.read_to_end(&mut Vec::new()).unwrap_err();
+    let inner = err
+        .into_inner()
+        .and_then(|e| e.downcast::<lz4rip::frame::Error>().ok());
+    assert!(matches!(
+        inner.as_deref(),
+        Some(lz4rip::frame::Error::DecompressedSizeLimit { limit, actual })
+            if *limit == total - 1 && *actual == total
+    ));
+}
+
+#[test]
+fn stop_at_frame_end_keeps_errors_inside_a_frame() {
+    let records: [&[u8]; 2] = [compression1k(), compression34k()];
+    let frames = frame_per_record(&records, lz4rip::frame::BlockMode::Independent);
+
+    // A truncated second frame: the first reads, the second fails.
+    let mut stream = frames.concat();
+    stream.truncate(stream.len() - 6);
+    let mut dec = lz4rip::frame::FrameDecoder::new(&stream[..]).stop_at_frame_end();
+    let mut output = Vec::new();
+    dec.read_to_end(&mut output).unwrap();
+    assert_eq!(output, records[0]);
+    let err = dec.read_to_end(&mut Vec::new()).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+
+    // A wrong content checksum fails at the frame end, not after it.
+    let mut stream = frames.concat();
+    stream[frames[0].len() - 1] ^= 0xFF;
+    let mut dec = lz4rip::frame::FrameDecoder::new(&stream[..]).stop_at_frame_end();
+    let err = dec.read_to_end(&mut Vec::new()).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    // The next frame still decodes.
+    let mut output = Vec::new();
+    dec.read_to_end(&mut output).unwrap();
+    assert_eq!(output, records[1]);
+}
+
 #[test]
 fn checksums() {
     for &input in &[compression34k(), compression66json()] {
