@@ -23,15 +23,17 @@ fn vec_sink_for_compression(
     offset: usize,
     pos: usize,
     required_capacity: usize,
-) -> BlockSink<'_> {
+) -> SliceSink<'_> {
     vec.resize(offset + required_capacity, 0);
-    BlockSink(SliceSink::new(&mut vec[offset..], pos))
+    SliceSink::new(&mut vec[offset..], pos)
 }
 
 /// The sink a block compresses into. A block that would not come out
 /// smaller than its input is stored uncompressed, so the compressor stops
 /// before copying its final literal run (see [`Sink::STOP_IF_NOT_SMALLER`]).
-/// On incompressible input that run is the whole block.
+/// On incompressible input that run is the whole block. Only for blocks that
+/// compress from position 0 of their input: independent ones and a frame's
+/// first block.
 struct BlockSink<'a>(SliceSink<'a>);
 
 impl Sink for BlockSink<'_> {
@@ -421,11 +423,12 @@ impl<W: io::Write> FrameEncoder<W> {
         let dst_required_size = get_maximum_output_size(src.len());
         let first_frame_block = self.content_len == 0;
 
-        let sink = &mut vec_sink_for_compression(&mut self.dst, 0, 0, dst_required_size);
+        let sink = vec_sink_for_compression(&mut self.dst, 0, 0, dst_required_size);
         let ext_dict = &self.src[self.ext_dict_offset..self.ext_dict_offset + self.ext_dict_len];
         let independent = self.frame_info.block_mode == BlockMode::Independent;
         let compress_result = if !self.dict.is_empty() && (independent || first_frame_block) {
             debug_assert_eq!(self.ext_dict_len, 0);
+            let sink = &mut BlockSink(sink);
             if self.ratio {
                 compress_ratio_into_sink_with_dict::<true>(src, sink, &self.dict)
             } else {
@@ -441,6 +444,7 @@ impl<W: io::Write> FrameEncoder<W> {
             // more matches, and a frame of one block allocates no table of
             // its own. Later blocks share one table, which they need not
             // clear.
+            let sink = &mut BlockSink(sink);
             if self.ratio {
                 compress_ratio_into_sink_with_dict::<false>(src, sink, b"")
             } else {
@@ -450,6 +454,7 @@ impl<W: io::Write> FrameEncoder<W> {
             debug_assert_eq!(self.frame_info.block_mode, BlockMode::Linked);
             let (start, offset) = (self.src_start, self.src_stream_offset);
             let ratio = self.ratio;
+            let sink = &mut { sink };
             match self
                 .compression_table
                 .get_or_insert_with(|| CompressionTable::new(ratio))
@@ -464,19 +469,36 @@ impl<W: io::Write> FrameEncoder<W> {
         } else {
             let (start, offset) = (self.src_start, self.src_stream_offset);
             let ratio = self.ratio;
-            match self
+            let table = self
                 .compression_table
-                .get_or_insert_with(|| CompressionTable::new(ratio))
-            {
-                CompressionTable::Fast(t) => {
-                    compress_into_sink_with_table::<false, true, false, _>(
-                        input, start, sink, t, b"", offset,
-                    )
+                .get_or_insert_with(|| CompressionTable::new(ratio));
+            if start == 0 {
+                let sink = &mut BlockSink(sink);
+                match table {
+                    CompressionTable::Fast(t) => {
+                        compress_into_sink_with_table::<false, true, false, _>(
+                            input, start, sink, t, b"", offset,
+                        )
+                    }
+                    CompressionTable::Ratio(t) => {
+                        compress_ratio_into_sink_with_table::<false, true, _>(
+                            input, start, sink, t, b"", offset,
+                        )
+                    }
                 }
-                CompressionTable::Ratio(t) => {
-                    compress_ratio_into_sink_with_table::<false, true, _>(
-                        input, start, sink, t, b"", offset,
-                    )
+            } else {
+                let sink = &mut { sink };
+                match table {
+                    CompressionTable::Fast(t) => {
+                        compress_into_sink_with_table::<false, true, false, _>(
+                            input, start, sink, t, b"", offset,
+                        )
+                    }
+                    CompressionTable::Ratio(t) => {
+                        compress_ratio_into_sink_with_table::<false, true, _>(
+                            input, start, sink, t, b"", offset,
+                        )
+                    }
                 }
             }
         };

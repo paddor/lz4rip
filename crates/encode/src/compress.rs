@@ -297,17 +297,17 @@ fn handle_last_literals(rest: &mut [u8], input: &[u8], start: usize) -> usize {
 }
 
 /// Whether the final literal run from `start` makes the block at least as
-/// long as its input: `written` bytes so far, input `input[input_pos..]`.
-/// For [`Sink::STOP_IF_NOT_SMALLER`].
+/// long as `input`, with `written` bytes so far. For
+/// [`Sink::STOP_IF_NOT_SMALLER`], which compresses from `input_pos` 0.
 #[cold]
-fn not_smaller(written: usize, input: &[u8], input_pos: usize, start: usize) -> bool {
+fn not_smaller(written: usize, input: &[u8], start: usize) -> bool {
     let lit_len = input.len() - start;
     let token_and_len = 1 + if lit_len >= 0xF {
         (lit_len - 0xF) / 0xFF + 1
     } else {
         0
     };
-    written + token_and_len + lit_len >= input.len() - input_pos
+    written + token_and_len + lit_len >= input.len()
 }
 
 /// Mark the bytes up to `rest_len` written: `output` held `total` bytes
@@ -408,6 +408,9 @@ pub(crate) fn compress_core<
     if NEAR {
         assert!(ext_dict.len() + input.len() <= MAX_DISTANCE + 1);
     }
+    // `input_pos` is not kept for the test: one more live value in the
+    // search loop cost compressible frame blocks up to 6%.
+    assert!(!S::STOP_IF_NOT_SMALLER || input_pos == 0);
     let input_stream_offset = if HAS_OFFSET { input_stream_offset } else { 0 };
     let (out, out_pos) = output.output_mut_with_pos();
     let out_start = *out_pos;
@@ -471,7 +474,7 @@ pub(crate) fn compress_core<
 
             if next_cur > end_pos_check + 1 {
                 if S::STOP_IF_NOT_SMALLER
-                    && not_smaller(out_total - rest.len(), input, input_pos, literal_start)
+                    && not_smaller(out_total - rest.len(), input, literal_start)
                 {
                     return Err(CompressError::OutputTooSmall);
                 }

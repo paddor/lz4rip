@@ -10,7 +10,8 @@ use crate::fastcpy::slice_copy;
 /// against mid-call violations from concurrent access.
 pub trait Sink {
     /// When true, the compressor gives up on a block whose output would not
-    /// come out smaller than its input. It returns
+    /// come out smaller than its input, which must start at position 0. It
+    /// returns
     /// [`CompressError::OutputTooSmall`](crate::CompressError::OutputTooSmall)
     /// instead of writing the final literal run, which on incompressible
     /// input is the whole block. For callers that store such blocks
