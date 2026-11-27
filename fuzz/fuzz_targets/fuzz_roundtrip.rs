@@ -15,6 +15,10 @@ struct Input {
     /// to wrap its small table's `u16` positions.
     #[arbitrary(with = |u: &mut arbitrary::Unstructured| u.int_in_range(1..=3u8))]
     rounds: u8,
+    /// Chunk size for the reused `Compressor`, across its 512 B and 1 KiB
+    /// table reuse limits.
+    #[arbitrary(with = |u: &mut arbitrary::Unstructured| u.int_in_range(1..=1200u16))]
+    plain_chunk: u16,
 }
 
 fuzz_target!(|input: Input| {
@@ -48,6 +52,15 @@ fuzz_target!(|input: Input| {
     for _ in 0..input.rounds {
         for c in payload.chunks(input.chunk as usize) {
             assert_eq!(comp.compress(c), lz4rip::compress_ratio(c));
+        }
+    }
+
+    // One plain compressor over many chunks: whether a chunk reuses the
+    // table depends on its size and on how well earlier chunks compressed.
+    let mut plain = lz4rip::block::Compressor::new();
+    for _ in 0..input.rounds {
+        for c in payload.chunks(input.plain_chunk as usize) {
+            assert_eq!(decompress(&plain.compress(c), c.len()).unwrap(), c);
         }
     }
 });
